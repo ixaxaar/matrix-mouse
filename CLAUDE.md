@@ -1,17 +1,16 @@
 # M5 Stack Atom Matrix Controller System
 
 ## Project Overview
-Create a wireless mouse controller using M5 Stack Atom Matrix that communicates with a Linux laptop over WiFi or Bluetooth to provide gesture-based mouse control.
+Create a wireless mouse controller using M5 Stack Atom Matrix that communicates with a Linux laptop over Bluetooth to provide gesture-based mouse control.
 
 ## System Architecture
 
 ### Hardware Components
 - **M5 Stack Atom Matrix**: ESP32-based device with 5x5 LED matrix and built-in IMU (MPU6886)
-- **Linux Laptop**: Target system with WiFi/Bluetooth capability
+- **Linux Laptop**: Target system with Bluetooth capability
 
-### Communication Options
-1. **WiFi (Primary)**: UDP socket communication over local network
-2. **Bluetooth (Alternative)**: BLE with custom service/characteristic
+### Communication
+- **Bluetooth**: BLE with custom service/characteristic for sensor data transmission
 
 ## Technical Specifications
 
@@ -20,34 +19,34 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
 - **Sensors**: IMU (accelerometer/gyroscope) for gesture detection
 - **Input**: Physical button for click actions
 - **Output**: LED matrix for status indication
-- **Communication**: WiFi client or BLE peripheral
+- **Communication**: BLE peripheral
 
-#### Gesture Detection
-- **Tilt Control**: Use accelerometer X/Y axes for cursor movement
-- **Tap Detection**: Use accelerometer Z-axis threshold for left click
-- **Button Press**: Physical button for right click
+#### Sensor Data and Controls
+- **Tilt Control**: Accelerometer X/Y axes for cursor movement
+- **Scroll Control**: Accelerometer Z-axis for vertical scrolling (with noise filtering)
+- **Left Click**: Physical button short press
+- **Right Click**: Physical button long press
+- **Sensor Reporting**: All IMU sensor values transmitted for configurable actions on Linux side
 - **Gesture Sensitivity**: Configurable dead zone and scaling
 
-#### Network Protocol (WiFi)
-- **Transport**: UDP packets
-- **Port**: 8080 (configurable)
-- **Packet Format**:
+#### Bluetooth Protocol
+- **Transport**: BLE characteristics
+- **Data Format**:
   ```
-  struct MousePacket {
-    uint8_t type;      // 1=move, 2=click, 3=release
-    int16_t dx;        // X movement delta
-    int16_t dy;        // Y movement delta
-    uint8_t button;    // 0=none, 1=left, 2=right
+  struct SensorPacket {
+    float accel_x, accel_y, accel_z;    // Accelerometer values
+    float gyro_x, gyro_y, gyro_z;      // Gyroscope values
+    uint8_t button_state;               // 0=none, 1=short_press, 2=long_press
     uint32_t timestamp;
   };
   ```
 
-#### Bluetooth Protocol (Alternative)
-- **Service UUID**: Custom service for mouse control
+#### BLE Service Structure
+- **Service UUID**: Custom service for sensor data
 - **Characteristics**:
-  - Movement: X/Y delta values
-  - Click: Button state changes
-  - Status: Device status/battery
+  - Sensor Data: Complete IMU readings and button state
+  - Configuration: Settings for sensitivity and filtering
+  - Status: Device status/battery level
 
 ### Linux Driver/Daemon
 
@@ -57,35 +56,35 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
 3. **User-space Daemon**: Background service handling communication
 
 #### Core Components
-- **Network Listener**: UDP socket server or BLE scanner
-- **Input Injection**: Convert packets to Linux input events
-- **Device Management**: Handle connection/disconnection
-- **Configuration**: Sensitivity, button mapping, calibration
+- **BLE Client**: Bluetooth scanner and connection management
+- **Input Injection**: Convert sensor data to Linux input events
+- **Device Management**: Handle BLE connection/disconnection
+- **Configuration**: Configurable action mapping, sensitivity, noise filtering
 
 #### Communication Flow
 ```
-M5 Atom Matrix → WiFi/BLE → Linux Daemon → uinput → X11/Wayland
+M5 Atom Matrix → BLE → Linux Daemon → uinput → X11/Wayland
 ```
 
 ## Implementation Plan
 
-### Phase 1: Basic WiFi Implementation
-1. M5 Atom Matrix firmware with basic IMU reading
-2. WiFi connectivity and UDP packet transmission
-3. Linux daemon with UDP listener and uinput integration
-4. Basic cursor movement and click detection
+### Phase 1: Basic Bluetooth Implementation
+1. M5 Atom Matrix firmware with complete IMU reading
+2. BLE peripheral setup and sensor data transmission
+3. Linux daemon with BLE client and uinput integration
+4. Configurable action mapping (cursor, scroll, clicks)
 
 ### Phase 2: Enhanced Features
-1. Gesture recognition improvements
-2. LED feedback system
-3. Configuration interface
-4. Calibration routine
+1. Advanced sensor filtering and noise reduction
+2. LED feedback system for connection status
+3. Runtime configuration interface
+4. Calibration and sensitivity tuning
 
-### Phase 3: Bluetooth Option
-1. BLE implementation on M5 Atom Matrix
-2. Linux BLE client integration
-3. Pairing and connection management
-4. Fallback between WiFi and Bluetooth
+### Phase 3: Advanced Features
+1. Custom gesture recognition
+2. Multiple device support
+3. Power management optimization
+4. Advanced configuration profiles
 
 ## File Structure
 ```
@@ -94,12 +93,12 @@ m5-matrix/
 │   ├── src/
 │   │   ├── main.cpp
 │   │   ├── gesture.cpp
-│   │   └── network.cpp
+│   │   └── bluetooth.cpp
 │   └── platformio.ini
 ├── driver/            # Linux daemon
 │   ├── src/
 │   │   ├── main.c
-│   │   ├── network.c
+│   │   ├── bluetooth.c
 │   │   └── uinput.c
 │   └── Makefile
 ├── config/            # Configuration files
@@ -107,24 +106,25 @@ m5-matrix/
 ```
 
 ## Configuration
-- **WiFi Credentials**: Stored in firmware or configured via AP mode
-- **Sensitivity Settings**: Mouse movement scaling factors  
-- **Button Mapping**: Configurable button assignments
-- **Connection Timeout**: Automatic reconnection handling
+- **BLE Pairing**: Device discovery and pairing management
+- **Action Mapping**: Configurable sensor-to-action assignments
+- **Sensitivity Settings**: Movement scaling and dead zones
+- **Noise Filtering**: Z-axis scroll filtering parameters
+- **Connection Timeout**: Automatic BLE reconnection handling
 
 ## Security Considerations
-- Local network only (no internet communication)
-- Optional authentication token
+- BLE local pairing only (no internet communication)
+- BLE authentication and encryption
 - Input validation on Linux daemon
-- Limited packet rate to prevent abuse
+- Rate limiting to prevent input flooding
 
 ## Development Tools
 - **M5 Stack**: PlatformIO or Arduino IDE
-- **Linux**: GCC, make, libudev-dev
+- **Linux**: GCC, make, libbluetooth-dev, libudev-dev
 - **Testing**: evtest, xinput for input verification
 
 ## Performance Requirements
 - **Latency**: <50ms end-to-end
 - **Battery Life**: >8 hours continuous use
-- **Range**: 10m typical WiFi range
-- **Reliability**: Auto-reconnection on network drops
+- **Range**: 10m typical BLE range
+- **Reliability**: Auto-reconnection on BLE drops
