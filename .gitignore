@@ -1,0 +1,68 @@
+# Build directories
+build/
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.so
+*.a
+*.exe
+*.bin
+*.elf
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment and config
+.env
+*.local
+config.h
+wifi_config.h
+
+# Logs
+*.log
+log/
+
+# Temporary files
+*.tmp
+*.temp
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json
+
+# Arduino IDE
+*.hex
+*.bin
+*.map
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Testing
+test_results/
+coverage/
+
+# Documentation build
+docs/_build/
