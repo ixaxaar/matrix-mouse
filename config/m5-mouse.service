@@ -1,0 +1,22 @@
+[Unit]
+Description=M5 Atom Matrix Mouse Controller Daemon
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/m5-mouse-daemon --daemon --config /etc/m5-mouse.conf
+Restart=always
+RestartSec=5
+User=root
+Group=root
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/dev/uinput /dev/input
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
