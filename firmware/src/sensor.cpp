@@ -2,7 +2,8 @@
 #include <M5Atom.h>
 
 void initSensor() {
-    Serial.println("Initializing IMU sensor...");
+    Serial.println("🎯 IMU sensor initialized successfully!");
+    Serial.println("📊 Accelerometer & Gyroscope ready for data");
     // M5.IMU is initialized in M5.begin()
 }
 

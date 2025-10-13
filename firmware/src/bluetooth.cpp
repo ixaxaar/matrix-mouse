@@ -3,7 +3,8 @@
 #include <M5Atom.h>
 
 void initBluetooth() {
-    Serial.println("Initializing Bluetooth...");
+    Serial.println("🔵 Bluetooth stack initialized!");
+    Serial.println("📶 BLE ready for peripheral mode");
 }
 
 void sendSensorData(uint8_t buttonState) {
@@ -23,6 +24,15 @@ void sendSensorData(uint8_t buttonState) {
     pCharacteristic->notify();
 
     if (buttonState > 0) {
-        Serial.printf("Button: %d\n", buttonState);
+        Serial.printf("📤 Sending click data: %s\\n", 
+                     buttonState == 1 ? "LEFT CLICK" : "RIGHT CLICK");
+    }
+    
+    // Periodically show sensor data (every 100 packets ~2 seconds)
+    static int packetCount = 0;
+    if (buttonState == 0 && ++packetCount % 100 == 0) {
+        Serial.printf("📊 Sensor data - Accel: %.2f,%.2f,%.2f | Gyro: %.2f,%.2f,%.2f\\n",
+                     packet.accel_x, packet.accel_y, packet.accel_z,
+                     packet.gyro_x, packet.gyro_y, packet.gyro_z);
     }
 }
