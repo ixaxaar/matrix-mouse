@@ -94,43 +94,24 @@ void setup() {
 void loop() {
   M5.update();
 
-  // Handle button press
-  static unsigned long buttonPressStart = 0;
-  static bool buttonPressed = false;
-  static bool longPressHandled = false;
+  // Handle button press (simple click only)
+  static bool lastButtonState = false;
+  bool currentButtonState = M5.Btn.isPressed();
 
-  if (M5.Btn.isPressed() && !buttonPressed) {
-    buttonPressed = true;
-    buttonPressStart = millis();
-    longPressHandled = false;
-    Serial.println("🔘 Button pressed - measuring duration...");
-    M5.dis.fillpix(0x0000ff); // Blue flash on press
+  if (currentButtonState && !lastButtonState) {
+    // Button pressed
+    Serial.println("🖱️ LEFT CLICK pressed");
+    sendSensorData(1); // Left click
+    M5.dis.fillpix(0x00ffff); // Cyan flash for click
     delay(50);
     M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
+  } else if (!currentButtonState && lastButtonState) {
+    // Button released  
+    Serial.println("🖱️ LEFT CLICK released");
+    sendSensorData(0); // Release
   }
 
-  if (M5.Btn.isPressed() && buttonPressed && !longPressHandled) {
-    if (millis() - buttonPressStart > 500) { // 500ms for long press
-      Serial.println("🖱️  RIGHT CLICK detected (long press)");
-      sendSensorData(2); // Right click
-      longPressHandled = true;
-      M5.dis.fillpix(0xff00ff); // Magenta flash for right click
-      delay(100);
-      M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
-    }
-  }
-
-  if (!M5.Btn.isPressed() && buttonPressed) {
-    if (!longPressHandled) {
-      Serial.println("🖱️  LEFT CLICK detected (short press)");
-      sendSensorData(1); // Left click (short press)
-      M5.dis.fillpix(0x00ffff); // Cyan flash for left click
-      delay(100);
-      M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
-    }
-    buttonPressed = false;
-    longPressHandled = false;
-  }
+  lastButtonState = currentButtonState;
 
   // Send sensor data continuously when connected
   if (deviceConnected) {
