@@ -5,7 +5,7 @@
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
 #include <bluetooth/l2cap.h>
-#include <bluetooth/uuid.h>
+// #include <bluetooth/uuid.h>
 #include "common.h"
 
 typedef struct {

@@ -9,6 +9,7 @@
 #include "common.h"
 #include "bluetooth.h"
 #include "uinput.h"
+#include <unistd.h>
 
 MouseConfig config = {
     .movement_sensitivity = 2.0f,
@@ -42,7 +43,7 @@ int main(int argc, char* argv[]) {
     bool daemon_mode = false;
     bool verbose = false;
     char* config_file = "/etc/m5-mouse.conf";
-    
+
     static struct option long_options[] = {
         {"config", required_argument, 0, 'c'},
         {"daemon", no_argument, 0, 'd'},
@@ -50,7 +51,7 @@ int main(int argc, char* argv[]) {
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
-    
+
     int opt;
     while ((opt = getopt_long(argc, argv, "c:dvh", long_options, NULL)) != -1) {
         switch (opt) {
@@ -71,14 +72,14 @@ int main(int argc, char* argv[]) {
                 return 1;
         }
     }
-    
+
     // Load configuration
     load_config(config_file);
-    
+
     // Setup signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    
+
     if (daemon_mode) {
         // Daemonize
         pid_t pid = fork();
@@ -89,28 +90,28 @@ int main(int argc, char* argv[]) {
         if (pid > 0) {
             return 0; // Parent exits
         }
-        
+
         setsid();
         chdir("/");
         umask(0);
-        
+
         close(STDIN_FILENO);
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
-        
+
         openlog("m5-mouse-daemon", LOG_PID, LOG_DAEMON);
     } else {
         openlog("m5-mouse-daemon", LOG_PID | LOG_PERROR, LOG_USER);
     }
-    
+
     syslog(LOG_INFO, "M5 Mouse Daemon starting...");
-    
+
     // Initialize Bluetooth
     if (init_bluetooth() < 0) {
         syslog(LOG_ERR, "Failed to initialize Bluetooth");
         return 1;
     }
-    
+
     // Initialize uinput device
     UInputDevice uinput_device;
     if (init_uinput_device(&uinput_device) < 0) {
@@ -118,11 +119,11 @@ int main(int argc, char* argv[]) {
         cleanup_bluetooth();
         return 1;
     }
-    
+
     syslog(LOG_INFO, "Scanning for M5 device...");
-    
+
     BLEConnection connection = {0};
-    
+
     while (running) {
         // Scan for device
         if (scan_for_device(&connection) < 0) {
@@ -130,31 +131,31 @@ int main(int argc, char* argv[]) {
             sleep(5);
             continue;
         }
-        
+
         syslog(LOG_INFO, "Found M5 device: %s", connection.device_name);
-        
+
         // Connect to device
         if (connect_to_device(&connection) < 0) {
             syslog(LOG_WARNING, "Connection failed, retrying in 5 seconds...");
             sleep(5);
             continue;
         }
-        
+
         syslog(LOG_INFO, "Connected to M5 device");
-        
+
         // Main data processing loop
         while (running && connection.connected) {
             SensorPacket packet;
             int result = read_sensor_data(&connection, &packet);
-            
+
             if (result < 0) {
                 syslog(LOG_WARNING, "Lost connection to device");
                 break;
             }
-            
+
             if (result > 0) {
                 process_sensor_data(&uinput_device, &packet);
-                
+
                 if (verbose && !daemon_mode) {
                     printf("Accel: %.2f,%.2f,%.2f Gyro: %.2f,%.2f,%.2f Btn: %d\n",
                            packet.accel_x, packet.accel_y, packet.accel_z,
@@ -162,20 +163,20 @@ int main(int argc, char* argv[]) {
                            packet.button_state);
                 }
             }
-            
+
             usleep(20000); // 50Hz
         }
-        
+
         disconnect_device(&connection);
         syslog(LOG_INFO, "Disconnected from device, will retry...");
         sleep(2);
     }
-    
+
     cleanup_uinput_device(&uinput_device);
     cleanup_bluetooth();
-    
+
     syslog(LOG_INFO, "M5 Mouse Daemon stopped");
     closelog();
-    
+
     return 0;
 }
