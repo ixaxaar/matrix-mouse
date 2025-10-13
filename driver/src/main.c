@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -9,7 +10,6 @@
 #include "common.h"
 #include "bluetooth.h"
 #include "uinput.h"
-#include <unistd.h>
 
 MouseConfig config = {
     .movement_sensitivity = 2.0f,
