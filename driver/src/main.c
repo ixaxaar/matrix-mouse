@@ -42,7 +42,7 @@ void print_usage(const char* program_name) {
 int main(int argc, char* argv[]) {
     bool daemon_mode = false;
     bool verbose = false;
-    char* config_file = "/etc/m5-mouse.conf";
+    char* config_file = "/etc/m5-mouse.yaml";
 
     static struct option long_options[] = {
         {"config", required_argument, 0, 'c'},

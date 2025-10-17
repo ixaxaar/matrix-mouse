@@ -3,6 +3,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <yaml.h>
+
+static void parse_yaml_value(const char* key, yaml_node_t* value_node) {
+    if (value_node->type == YAML_SCALAR_NODE) {
+        char* value = (char*)value_node->data.scalar.value;
+        
+        if (strcmp(key, "movement_sensitivity") == 0) {
+            config.movement_sensitivity = atof(value);
+        } else if (strcmp(key, "scroll_sensitivity") == 0) {
+            config.scroll_sensitivity = atof(value);
+        } else if (strcmp(key, "dead_zone") == 0) {
+            config.dead_zone = atof(value);
+        } else if (strcmp(key, "scroll_threshold") == 0) {
+            config.scroll_threshold = atof(value);
+        } else if (strcmp(key, "invert_x") == 0) {
+            config.invert_x = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
+        } else if (strcmp(key, "invert_y") == 0) {
+            config.invert_y = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
+        } else if (strcmp(key, "invert_scroll") == 0) {
+            config.invert_scroll = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
+        } else if (strcmp(key, "scroll_filter_samples") == 0) {
+            config.scroll_filter_samples = atoi(value);
+            if (config.scroll_filter_samples < 1) config.scroll_filter_samples = 1;
+            if (config.scroll_filter_samples > 10) config.scroll_filter_samples = 10;
+        }
+    }
+}
 
 void load_config(const char* config_file) {
     FILE* file = fopen(config_file, "r");
@@ -11,50 +38,43 @@ void load_config(const char* config_file) {
         return;
     }
 
-    char line[256];
-    while (fgets(line, sizeof(line), file)) {
-        // Remove newline
-        line[strcspn(line, "\n")] = 0;
+    yaml_parser_t parser;
+    yaml_document_t document;
+    
+    if (!yaml_parser_initialize(&parser)) {
+        syslog(LOG_ERR, "Failed to initialize YAML parser");
+        fclose(file);
+        return;
+    }
 
-        // Skip comments and empty lines
-        if (line[0] == '#' || line[0] == '\0') continue;
+    yaml_parser_set_input_file(&parser, file);
 
-        char key[64], value[64];
-        if (sscanf(line, "%63[^=]=%63s", key, value) == 2) {
-            // Trim whitespace
-            char* k = key;
-            while (*k == ' ') k++;
-            char* ke = k + strlen(k) - 1;
-            while (ke > k && *ke == ' ') *ke-- = '\0';
+    if (!yaml_parser_load(&parser, &document)) {
+        syslog(LOG_ERR, "Failed to parse YAML config file %s", config_file);
+        yaml_parser_delete(&parser);
+        fclose(file);
+        return;
+    }
 
-            char* v = value;
-            while (*v == ' ') v++;
-            char* ve = v + strlen(v) - 1;
-            while (ve > v && *ve == ' ') *ve-- = '\0';
-
-            // Parse configuration values
-            if (strcmp(k, "movement_sensitivity") == 0) {
-                config.movement_sensitivity = atof(v);
-            } else if (strcmp(k, "scroll_sensitivity") == 0) {
-                config.scroll_sensitivity = atof(v);
-            } else if (strcmp(k, "dead_zone") == 0) {
-                config.dead_zone = atof(v);
-            } else if (strcmp(k, "scroll_threshold") == 0) {
-                config.scroll_threshold = atof(v);
-            } else if (strcmp(k, "invert_x") == 0) {
-                config.invert_x = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
-            } else if (strcmp(k, "invert_y") == 0) {
-                config.invert_y = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
-            } else if (strcmp(k, "invert_scroll") == 0) {
-                config.invert_scroll = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
-            } else if (strcmp(k, "scroll_filter_samples") == 0) {
-                config.scroll_filter_samples = atoi(v);
-                if (config.scroll_filter_samples < 1) config.scroll_filter_samples = 1;
-                if (config.scroll_filter_samples > 10) config.scroll_filter_samples = 10;
+    yaml_node_t* root = yaml_document_get_root_node(&document);
+    if (root && root->type == YAML_MAPPING_NODE) {
+        yaml_node_pair_t* pair;
+        for (pair = root->data.mapping.pairs.start; 
+             pair < root->data.mapping.pairs.top; pair++) {
+            
+            yaml_node_t* key_node = yaml_document_get_node(&document, pair->key);
+            yaml_node_t* value_node = yaml_document_get_node(&document, pair->value);
+            
+            if (key_node->type == YAML_SCALAR_NODE) {
+                char* key = (char*)key_node->data.scalar.value;
+                parse_yaml_value(key, value_node);
             }
         }
     }
 
+    yaml_document_delete(&document);
+    yaml_parser_delete(&parser);
     fclose(file);
+    
     syslog(LOG_INFO, "Configuration loaded from %s", config_file);
 }

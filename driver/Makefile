@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g
 INCLUDES = -Iinclude
-LIBS = -lbluetooth -lpthread -lm
+LIBS = -lbluetooth -lpthread -lm -lyaml
 
 SRCDIR = src
 OBJDIR = obj
@@ -27,12 +27,12 @@ clean:
 
 install: $(TARGET)
 	sudo cp $(TARGET) /usr/local/bin/
-	sudo cp ../config/m5-mouse.conf /etc/
+	sudo cp ../config/m5-mouse.yaml /etc/
 	sudo cp ../config/m5-mouse.service /etc/systemd/system/
 	sudo systemctl daemon-reload
 
 uninstall:
 	sudo rm -f /usr/local/bin/$(TARGET)
-	sudo rm -f /etc/m5-mouse.conf
+	sudo rm -f /etc/m5-mouse.yaml
 	sudo rm -f /etc/systemd/system/m5-mouse.service
 	sudo systemctl daemon-reload
