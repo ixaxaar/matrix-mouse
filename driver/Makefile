@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g
-INCLUDES = -Iinclude
-LIBS = -lbluetooth -lpthread -lm -lyaml
+INCLUDES = -Iinclude $(shell pkg-config --cflags dbus-1)
+LIBS = -lbluetooth -lpthread -lm -lyaml -ldbus-1
 
 SRCDIR = src
 OBJDIR = obj

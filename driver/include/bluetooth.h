@@ -1,18 +1,20 @@
 #ifndef BLUETOOTH_H
 #define BLUETOOTH_H
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/l2cap.h>
-// #include <bluetooth/uuid.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <dbus/dbus.h>
 #include "common.h"
 
 typedef struct {
-    int socket;
-    bdaddr_t device_addr;
-    bool connected;
+    DBusConnection* dbus_conn;
+    char device_path[256];
+    char device_address[18];
     char device_name[256];
+    char service_path[256];
+    char char_path[256];
+    bool connected;
+    bool scanning;
 } BLEConnection;
 
 // Function declarations
