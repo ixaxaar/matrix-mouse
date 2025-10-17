@@ -8,7 +8,7 @@
 static void parse_yaml_value(const char* key, yaml_node_t* value_node) {
     if (value_node->type == YAML_SCALAR_NODE) {
         char* value = (char*)value_node->data.scalar.value;
-        
+
         if (strcmp(key, "movement_sensitivity") == 0) {
             config.movement_sensitivity = atof(value);
         } else if (strcmp(key, "scroll_sensitivity") == 0) {
@@ -40,7 +40,7 @@ void load_config(const char* config_file) {
 
     yaml_parser_t parser;
     yaml_document_t document;
-    
+
     if (!yaml_parser_initialize(&parser)) {
         syslog(LOG_ERR, "Failed to initialize YAML parser");
         fclose(file);
@@ -59,12 +59,12 @@ void load_config(const char* config_file) {
     yaml_node_t* root = yaml_document_get_root_node(&document);
     if (root && root->type == YAML_MAPPING_NODE) {
         yaml_node_pair_t* pair;
-        for (pair = root->data.mapping.pairs.start; 
+        for (pair = root->data.mapping.pairs.start;
              pair < root->data.mapping.pairs.top; pair++) {
-            
+
             yaml_node_t* key_node = yaml_document_get_node(&document, pair->key);
             yaml_node_t* value_node = yaml_document_get_node(&document, pair->value);
-            
+
             if (key_node->type == YAML_SCALAR_NODE) {
                 char* key = (char*)key_node->data.scalar.value;
                 parse_yaml_value(key, value_node);
@@ -75,6 +75,6 @@ void load_config(const char* config_file) {
     yaml_document_delete(&document);
     yaml_parser_delete(&parser);
     fclose(file);
-    
+
     syslog(LOG_INFO, "Configuration loaded from %s", config_file);
 }
