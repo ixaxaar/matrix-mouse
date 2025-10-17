@@ -1,20 +1,24 @@
 # M5 Stack Atom Matrix Controller System
 
 ## Project Overview
+
 Create a wireless mouse controller using M5 Stack Atom Matrix that communicates with a Linux laptop over Bluetooth to provide gesture-based mouse control.
 
 ## System Architecture
 
 ### Hardware Components
+
 - **M5 Stack Atom Matrix**: ESP32-based device with 5x5 LED matrix and built-in IMU (MPU6886)
 - **Linux Laptop**: Target system with Bluetooth capability
 
 ### Communication
+
 - **Bluetooth**: BLE with custom service/characteristic for sensor data transmission
 
 ## Technical Specifications
 
 ### M5 Atom Matrix Firmware
+
 - **Platform**: Arduino/ESP-IDF
 - **Sensors**: IMU (accelerometer/gyroscope) for gesture detection
 - **Input**: Physical button for click actions
@@ -22,6 +26,7 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
 - **Communication**: BLE peripheral
 
 #### Sensor Data and Controls
+
 - **Tilt Control**: Accelerometer X/Y axes for cursor movement
 - **Scroll Control**: Accelerometer Z-axis for vertical scrolling (with noise filtering)
 - **Left Click**: Physical button short press
@@ -30,6 +35,7 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
 - **Gesture Sensitivity**: Configurable dead zone and scaling
 
 #### Bluetooth Protocol
+
 - **Transport**: BLE characteristics
 - **Data Format**:
   ```
@@ -42,6 +48,7 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
   ```
 
 #### BLE Service Structure
+
 - **Service UUID**: Custom service for sensor data
 - **Characteristics**:
   - Sensor Data: Complete IMU readings and button state
@@ -51,17 +58,20 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
 ### Linux Driver/Daemon
 
 #### Implementation Options
+
 1. **uinput Driver**: Create virtual mouse device using /dev/uinput
 2. **evdev Integration**: Direct event injection
 3. **User-space Daemon**: Background service handling communication
 
 #### Core Components
+
 - **BLE Client**: Bluetooth scanner and connection management
 - **Input Injection**: Convert sensor data to Linux input events
 - **Device Management**: Handle BLE connection/disconnection
 - **Configuration**: Configurable action mapping, sensitivity, noise filtering
 
 #### Communication Flow
+
 ```
 M5 Atom Matrix → BLE → Linux Daemon → uinput → X11/Wayland
 ```
@@ -69,24 +79,28 @@ M5 Atom Matrix → BLE → Linux Daemon → uinput → X11/Wayland
 ## Implementation Plan
 
 ### Phase 1: Basic Bluetooth Implementation
+
 1. M5 Atom Matrix firmware with complete IMU reading
 2. BLE peripheral setup and sensor data transmission
 3. Linux daemon with BLE client and uinput integration
 4. Configurable action mapping (cursor, scroll, clicks)
 
 ### Phase 2: Enhanced Features
+
 1. Advanced sensor filtering and noise reduction
 2. LED feedback system for connection status
 3. Runtime configuration interface
 4. Calibration and sensitivity tuning
 
 ### Phase 3: Advanced Features
+
 1. Custom gesture recognition
 2. Multiple device support
 3. Power management optimization
 4. Advanced configuration profiles
 
 ## File Structure
+
 ```
 m5-matrix/
 ├── firmware/           # M5 Atom Matrix code
@@ -106,6 +120,7 @@ m5-matrix/
 ```
 
 ## Configuration
+
 - **BLE Pairing**: Device discovery and pairing management
 - **Action Mapping**: Configurable sensor-to-action assignments
 - **Sensitivity Settings**: Movement scaling and dead zones
@@ -113,17 +128,20 @@ m5-matrix/
 - **Connection Timeout**: Automatic BLE reconnection handling
 
 ## Security Considerations
+
 - BLE local pairing only (no internet communication)
 - BLE authentication and encryption
 - Input validation on Linux daemon
 - Rate limiting to prevent input flooding
 
 ## Development Tools
+
 - **M5 Stack**: PlatformIO or Arduino IDE
 - **Linux**: GCC, make, libbluetooth-dev, libudev-dev
 - **Testing**: evtest, xinput for input verification
 
 ## Performance Requirements
+
 - **Latency**: <50ms end-to-end
 - **Battery Life**: >8 hours continuous use
 - **Range**: 10m typical BLE range
