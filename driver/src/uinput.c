@@ -9,6 +9,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include "common.h"
+#include <time.h>
 
 // Minimal event helpers
 static inline void emit_event(int fd, int type, int code, int value) {
@@ -23,35 +24,94 @@ static inline void emit_event(int fd, int type, int code, int value) {
 }
 static inline void emit_sync(int fd) { emit_event(fd, EV_SYN, SYN_REPORT, 0); }
 
+// Lightweight IMU filter state
+typedef struct {
+    double t_last;
+    float roll, pitch, yaw;
+    float gxf, gyf, gzf;
+    int initialized;
+} ImuFilterState;
+
+static ImuFilterState imu = {0};
+
+static inline double now_s() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
 // CALIBRATION/PROJECTION HOOK:
 // Edit this function to convert raw IMU into 2D cursor deltas.
 // You can combine gyro (rad/s or deg/s) and accel (g) however you like.
 // Return integer pixel deltas in dx, dy for a single sample.
 static void compute_cursor_delta(const SensorPacket* s, int* dx, int* dy) {
-    // Base mapping (pure gyro, axis swap):
-    // cursor X from gyro_y, cursor Y from -gyro_x
-    float gx = s->gyro_x;
-    float gy = s->gyro_y;
+    double t = now_s();
+    if (!imu.initialized) {
+        imu.t_last = t;
+        imu.roll = atan2f(s->accel_y, s->accel_z);
+        imu.pitch = atan2f(-s->accel_x, hypotf(s->accel_y, s->accel_z));
+        imu.yaw = 0.f;
+        imu.gxf = s->gyro_x;
+        imu.gyf = s->gyro_y;
+        imu.gzf = s->gyro_z;
+        imu.initialized = 1;
+        *dx = *dy = 0;
+        return;
+    }
 
-    // Configurable dead-zone (suppress small jitters)
-    const float dz = (config.dead_zone > 0.f) ? config.dead_zone : 0.f;
-    if (fabsf(gx) < dz) gx = 0.f;
-    if (fabsf(gy) < dz) gy = 0.f;
+    double dt = t - imu.t_last;
+    if (dt <= 0.0 || dt > 0.2) dt = 0.02;  // guard
+    imu.t_last = t;
 
-    // Sensitivity scales pixels per unit gyro
-    // Tune baseline 120.0f if your sample rate differs from 50 Hz
-    const float base_scale = 120.0f * (config.movement_sensitivity > 0.f ? config.movement_sensitivity : 1.0f);
+    // Low-pass gyro
+    const float lpf = 0.2f;
+    imu.gxf += lpf * (s->gyro_x - imu.gxf);
+    imu.gyf += lpf * (s->gyro_y - imu.gyf);
+    imu.gzf += lpf * (s->gyro_z - imu.gzf);
 
-    int out_dx = (int)lroundf(gy * base_scale);
-    int out_dy = (int)lroundf(-gx * base_scale);
+    float gx = imu.gxf, gy = imu.gyf, gz = imu.gzf;
 
-    // Invert axes if requested
+    // Complementary filter for roll/pitch, yaw is integrated only
+    const float alpha = 0.98f;
+    float acc_roll  = atan2f(s->accel_y, s->accel_z);
+    float acc_pitch = atan2f(-s->accel_x, hypotf(s->accel_y, s->accel_z));
+    imu.roll  = alpha * (imu.roll  + gx * (float)dt) + (1.f - alpha) * acc_roll;
+    imu.pitch = alpha * (imu.pitch + gy * (float)dt) + (1.f - alpha) * acc_pitch;
+    imu.yaw  += gz * (float)dt;
+
+    // Dead zone on rate
+    float rate_mag = fmaxf(fabsf(gx), fmaxf(fabsf(gy), fabsf(gz)));
+    if (rate_mag < (config.dead_zone > 0.f ? config.dead_zone : 0.f)) {
+        *dx = *dy = 0;
+        return;
+    }
+
+    // Map to cursor: horizontal from yaw rate (with a touch of gy), vertical from -gx
+    float sens = config.movement_sensitivity > 0.f ? config.movement_sensitivity : 1.f;
+    const float rate_gain = 1000.f; // pixels per rad/s, scaled by dt
+
+    float dx_rate = 0.85f * gz + 0.15f * gy;
+    float dy_rate = -gx;
+
+    int out_dx = (int)lroundf(dx_rate * (float)dt * rate_gain * sens);
+    int out_dy = (int)lroundf(dy_rate * (float)dt * rate_gain * sens);
+
+    // Optional small posture damping to reduce drift when still
+    const float angle_damp = 0.0f; // set >0 to blend angle feedback if needed
+    if (angle_damp > 0.f) {
+        out_dx += (int)lroundf(imu.yaw * angle_damp);
+        out_dy += (int)lroundf(imu.pitch * angle_damp);
+    }
+
     if (config.invert_x) out_dx = -out_dx;
     if (config.invert_y) out_dy = -out_dy;
 
-    // Placeholder for accel-assisted drift control (mix tilt estimate):
-    // float ax = s->accel_x, ay = s->accel_y, az = s->accel_z;
-    // TODO: blend gyro integration with accel gravity vector to reduce drift.
+    // Clamp step size
+    const int max_step = 60;
+    if (out_dx >  max_step) out_dx =  max_step;
+    if (out_dx < -max_step) out_dx = -max_step;
+    if (out_dy >  max_step) out_dy =  max_step;
+    if (out_dy < -max_step) out_dy = -max_step;
 
     *dx = out_dx;
     *dy = out_dy;
