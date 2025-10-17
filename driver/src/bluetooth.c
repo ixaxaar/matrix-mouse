@@ -10,340 +10,232 @@
 #include <math.h>
 
 #define BLUEZ_SERVICE "org.bluez"
-#define BLUEZ_ADAPTER_INTERFACE "org.bluez.Adapter1"
-#define BLUEZ_DEVICE_INTERFACE "org.bluez.Device1"
-#define BLUEZ_GATT_SERVICE_INTERFACE "org.bluez.GattService1"
-#define BLUEZ_GATT_CHARACTERISTIC_INTERFACE "org.bluez.GattCharacteristic1"
 #define ADAPTER_PATH "/org/bluez/hci0"
-
-#ifndef TRUE
-#define TRUE 1
-#endif
-#ifndef FALSE
-#define FALSE 0
-#endif
 
 static DBusConnection* dbus_conn = NULL;
 
-static int call_method(const char* path, const char* interface, const char* method) {
+// Simplified D-Bus method call with better error handling
+static int call_dbus_method(const char* path, const char* interface, const char* method) {
     DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, path, interface, method);
     if (!msg) {
-        syslog(LOG_ERR, "Failed to create D-Bus message for %s.%s", interface, method);
+        syslog(LOG_ERR, "Failed to create D-Bus message for %s", method);
         return -1;
     }
-    
+
     DBusError error;
     dbus_error_init(&error);
     DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 5000, &error);
     dbus_message_unref(msg);
-    
+
+    int result = 0;
     if (dbus_error_is_set(&error)) {
-        syslog(LOG_ERR, "D-Bus error calling %s.%s: %s", interface, method, error.message);
+        syslog(LOG_ERR, "D-Bus error calling %s: %s", method, error.message);
         dbus_error_free(&error);
-        return -1;
+        result = -1;
     }
-    
-    if (!reply) {
-        syslog(LOG_ERR, "No reply when calling %s.%s", interface, method);
-        return -1;
-    }
-    
-    dbus_message_unref(reply);
-    return 0;
+
+    if (reply) dbus_message_unref(reply);
+    return result;
 }
 
-static int set_property(const char* path, const char* interface, const char* property, bool value) {
-    DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, path, "org.freedesktop.DBus.Properties", "Set");
-    if (!msg) {
-        syslog(LOG_ERR, "Failed to create D-Bus message for %s.%s", interface, property);
-        return -1;
-    }
-    
+// Simplified property setter
+static int set_adapter_powered(bool powered) {
+    DBusMessage* msg = dbus_message_new_method_call(
+        BLUEZ_SERVICE, ADAPTER_PATH, "org.freedesktop.DBus.Properties", "Set");
+    if (!msg) return -1;
+
+    const char* interface = "org.bluez.Adapter1";
+    const char* property = "Powered";
+
     DBusMessageIter iter, variant;
     dbus_message_iter_init_append(msg, &iter);
     dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &interface);
     dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &property);
-    
-    dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, DBUS_TYPE_BOOLEAN_AS_STRING, &variant);
-    dbus_bool_t dbus_value = value ? TRUE : FALSE;
-    dbus_message_iter_append_basic(&variant, DBUS_TYPE_BOOLEAN, &dbus_value);
+    dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "b", &variant);
+    dbus_bool_t value = powered;
+    dbus_message_iter_append_basic(&variant, DBUS_TYPE_BOOLEAN, &value);
     dbus_message_iter_close_container(&iter, &variant);
-    
-    DBusError error;
-    dbus_error_init(&error);
-    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 5000, &error);
-    dbus_message_unref(msg);
-    
-    if (dbus_error_is_set(&error)) {
-        syslog(LOG_ERR, "D-Bus error setting %s.%s: %s", interface, property, error.message);
-        dbus_error_free(&error);
-        return -1;
-    }
-    
-    if (!reply) {
-        syslog(LOG_ERR, "No reply when setting %s.%s", interface, property);
-        return -1;
-    }
-    
-    dbus_message_unref(reply);
-    return 0;
-}
 
-static char* get_string_property(const char* path, const char* interface, const char* property) {
-    DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, path, "org.freedesktop.DBus.Properties", "Get");
-    if (!msg) return NULL;
-    
-    DBusMessageIter iter;
-    dbus_message_iter_init_append(msg, &iter);
-    dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &interface);
-    dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &property);
-    
     DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 5000, NULL);
     dbus_message_unref(msg);
-    
-    if (!reply) return NULL;
-    
-    DBusMessageIter reply_iter, variant_iter;
-    dbus_message_iter_init(reply, &reply_iter);
-    dbus_message_iter_recurse(&reply_iter, &variant_iter);
-    
-    char* value = NULL;
-    char* str_value;
-    if (dbus_message_iter_get_arg_type(&variant_iter) == DBUS_TYPE_STRING) {
-        dbus_message_iter_get_basic(&variant_iter, &str_value);
-        value = strdup(str_value);
+
+    int result = reply ? 0 : -1;
+    if (reply) dbus_message_unref(reply);
+    return result;
+}
+
+// Simplified device finder
+static bool find_m5_device(BLEConnection* conn) {
+    DBusMessage* msg = dbus_message_new_method_call(
+        BLUEZ_SERVICE, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
+    if (!msg) return false;
+
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, NULL);
+    dbus_message_unref(msg);
+    if (!reply) return false;
+
+    DBusMessageIter iter, dict_iter, entry_iter;
+    dbus_message_iter_init(reply, &iter);
+    dbus_message_iter_recurse(&iter, &dict_iter);
+
+    bool found = false;
+    while (dbus_message_iter_get_arg_type(&dict_iter) == DBUS_TYPE_DICT_ENTRY && !found) {
+        dbus_message_iter_recurse(&dict_iter, &entry_iter);
+
+        char* path;
+        dbus_message_iter_get_basic(&entry_iter, &path);
+
+        // Only check device paths
+        if (strstr(path, "/org/bluez/hci0/dev_")) {
+            // Get device name property
+            DBusMessage* prop_msg = dbus_message_new_method_call(
+                BLUEZ_SERVICE, path, "org.freedesktop.DBus.Properties", "Get");
+            if (prop_msg) {
+                const char* interface = "org.bluez.Device1";
+                const char* property = "Name";
+
+                DBusMessageIter prop_iter;
+                dbus_message_iter_init_append(prop_msg, &prop_iter);
+                dbus_message_iter_append_basic(&prop_iter, DBUS_TYPE_STRING, &interface);
+                dbus_message_iter_append_basic(&prop_iter, DBUS_TYPE_STRING, &property);
+
+                DBusMessage* prop_reply = dbus_connection_send_with_reply_and_block(
+                    dbus_conn, prop_msg, 5000, NULL);
+                dbus_message_unref(prop_msg);
+
+                if (prop_reply) {
+                    DBusMessageIter reply_iter, variant_iter;
+                    dbus_message_iter_init(prop_reply, &reply_iter);
+                    dbus_message_iter_recurse(&reply_iter, &variant_iter);
+
+                    if (dbus_message_iter_get_arg_type(&variant_iter) == DBUS_TYPE_STRING) {
+                        char* name;
+                        dbus_message_iter_get_basic(&variant_iter, &name);
+
+                        if (name && (strstr(name, "M5") || strstr(name, "Mouse"))) {
+                            strncpy(conn->device_path, path, sizeof(conn->device_path) - 1);
+                            strncpy(conn->device_name, name, sizeof(conn->device_name) - 1);
+                            found = true;
+                            syslog(LOG_INFO, "Found M5 device: %s", name);
+                        }
+                    }
+                    dbus_message_unref(prop_reply);
+                }
+            }
+        }
+
+        dbus_message_iter_next(&dict_iter);
     }
-    
+
     dbus_message_unref(reply);
-    return value;
+    return found;
 }
 
 int init_bluetooth() {
-    syslog(LOG_INFO, "Initializing BlueZ D-Bus connection");
-    
+    syslog(LOG_INFO, "Initializing Bluetooth");
+
     DBusError error;
     dbus_error_init(&error);
-    
+
     dbus_conn = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
     if (dbus_error_is_set(&error)) {
         syslog(LOG_ERR, "D-Bus connection failed: %s", error.message);
         dbus_error_free(&error);
         return -1;
     }
-    
-    if (set_property(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "Powered", true) != 0) {
-        syslog(LOG_ERR, "Failed to power on adapter");
-        return -1;
+
+    if (set_adapter_powered(true) != 0) {
+        syslog(LOG_WARNING, "Failed to power on adapter, continuing anyway");
     }
-    
-    syslog(LOG_INFO, "BlueZ D-Bus initialized successfully");
+
     return 0;
 }
 
 int scan_for_device(BLEConnection* conn) {
     if (!conn || !dbus_conn) return -1;
-    
-    syslog(LOG_INFO, "Starting BLE scan for M5 device");
-    
-    if (call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StartDiscovery") != 0) {
-        syslog(LOG_ERR, "Failed to start scanning");
+
+    syslog(LOG_INFO, "Scanning for M5 device...");
+
+    // Start discovery
+    if (call_dbus_method(ADAPTER_PATH, "org.bluez.Adapter1", "StartDiscovery") != 0) {
+        syslog(LOG_ERR, "Failed to start discovery");
         return -1;
     }
-    
+
     conn->scanning = true;
-    sleep(5);  // Scan for 5 seconds
-    
-    DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
-    if (!msg) {
-        syslog(LOG_ERR, "Failed to create ObjectManager message");
-        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
-        return -1;
-    }
-    
-    DBusError error;
-    dbus_error_init(&error);
-    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, &error);
-    dbus_message_unref(msg);
-    
-    if (dbus_error_is_set(&error)) {
-        syslog(LOG_ERR, "D-Bus error calling ObjectManager.GetManagedObjects: %s", error.message);
-        dbus_error_free(&error);
-        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
-        return -1;
-    }
-    
-    if (!reply) {
-        syslog(LOG_ERR, "No reply from ObjectManager.GetManagedObjects");
-        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
-        return -1;
-    }
-    
-    DBusMessageIter iter, dict_iter, entry_iter;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &dict_iter);
-    
-    bool found = false;
-    while (dbus_message_iter_get_arg_type(&dict_iter) == DBUS_TYPE_DICT_ENTRY) {
-        dbus_message_iter_recurse(&dict_iter, &entry_iter);
-        
-        char* path;
-        dbus_message_iter_get_basic(&entry_iter, &path);
-        
-        if (strstr(path, "/org/bluez/hci0/dev_")) {
-            char* name = get_string_property(path, BLUEZ_DEVICE_INTERFACE, "Name");
-            char* address = get_string_property(path, BLUEZ_DEVICE_INTERFACE, "Address");
-            
-            if (name && (strstr(name, "M5") || strstr(name, "Mouse"))) {
-                strcpy(conn->device_path, path);
-                strcpy(conn->device_name, name);
-                if (address) strcpy(conn->device_address, address);
-                found = true;
-                syslog(LOG_INFO, "Found M5 device: %s at %s", name, address ? address : "unknown");
-            }
-            
-            free(name);
-            free(address);
-            
-            if (found) break;
-        }
-        
-        dbus_message_iter_next(&dict_iter);
-    }
-    
-    dbus_message_unref(reply);
-    call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
+    sleep(5);  // Scan duration
+
+    // Find device
+    bool found = find_m5_device(conn);
+
+    // Stop discovery
+    call_dbus_method(ADAPTER_PATH, "org.bluez.Adapter1", "StopDiscovery");
     conn->scanning = false;
-    
+
     return found ? 0 : -1;
 }
 
 int connect_to_device(BLEConnection* conn) {
     if (!conn || !dbus_conn || strlen(conn->device_path) == 0) {
-        syslog(LOG_ERR, "Invalid device path for connection");
         return -1;
     }
-    
-    syslog(LOG_INFO, "Connecting to device: %s", conn->device_path);
-    
-    if (call_method(conn->device_path, BLUEZ_DEVICE_INTERFACE, "Connect") != 0) {
-        syslog(LOG_ERR, "Failed to connect to device");
+
+    syslog(LOG_INFO, "Connecting to device...");
+
+    if (call_dbus_method(conn->device_path, "org.bluez.Device1", "Connect") != 0) {
         return -1;
     }
-    
-    sleep(3);  // Give connection time to establish
-    
-    // Find GATT service and characteristic
-    DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
-    if (!msg) return -1;
-    
-    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, NULL);
-    dbus_message_unref(msg);
-    
-    if (!reply) return -1;
-    
-    DBusMessageIter iter, dict_iter, entry_iter;
-    dbus_message_iter_init(reply, &iter);
-    dbus_message_iter_recurse(&iter, &dict_iter);
-    
-    bool service_found = false, char_found = false;
-    char device_prefix[256];
-    snprintf(device_prefix, sizeof(device_prefix), "%s/service", conn->device_path);
-    
-    while (dbus_message_iter_get_arg_type(&dict_iter) == DBUS_TYPE_DICT_ENTRY) {
-        dbus_message_iter_recurse(&dict_iter, &entry_iter);
-        
-        char* path;
-        dbus_message_iter_get_basic(&entry_iter, &path);
-        
-        if (strstr(path, device_prefix)) {
-            char* uuid = get_string_property(path, BLUEZ_GATT_SERVICE_INTERFACE, "UUID");
-            if (uuid && strcasecmp(uuid, SERVICE_UUID) == 0) {
-                strcpy(conn->service_path, path);
-                service_found = true;
-                syslog(LOG_INFO, "Found service: %s", path);
-            }
-            free(uuid);
-        }
-        
-        if (service_found && strstr(path, conn->service_path) && strstr(path, "/char")) {
-            char* uuid = get_string_property(path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE, "UUID");
-            if (uuid && strcasecmp(uuid, CHARACTERISTIC_UUID) == 0) {
-                strcpy(conn->char_path, path);
-                char_found = true;
-                syslog(LOG_INFO, "Found characteristic: %s", path);
-            }
-            free(uuid);
-        }
-        
-        dbus_message_iter_next(&dict_iter);
-    }
-    
-    dbus_message_unref(reply);
-    
-    if (!service_found || !char_found) {
-        syslog(LOG_ERR, "Required GATT service/characteristic not found");
-        return -1;
-    }
-    
-    // Start notifications
-    if (call_method(conn->char_path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE, "StartNotify") != 0) {
-        syslog(LOG_WARNING, "Failed to start notifications, will use polling");
-    }
-    
+
+    sleep(2);  // Connection establishment time
     conn->connected = true;
     conn->dbus_conn = dbus_conn;
-    
-    syslog(LOG_INFO, "Connected to M5 device successfully");
+
+    syslog(LOG_INFO, "Connected successfully");
     return 0;
 }
 
 int read_sensor_data(BLEConnection* conn, SensorPacket* packet) {
-    if (!conn || !packet || !conn->connected || !conn->dbus_conn) {
+    if (!conn || !packet || !conn->connected) {
         return -1;
     }
-    
-    // For now, use simulated data since implementing full GATT notification handling
-    // would require extensive D-Bus signal handling code
-    static int sim_counter = 0;
-    static float accel_sim = 0.0f;
-    sim_counter++;
-    
-    if (sim_counter % 5 == 0) {
-        accel_sim += 0.1f;
-        
-        packet->accel_x = 0.5f * sin(accel_sim);
-        packet->accel_y = 0.3f * cos(accel_sim * 0.7f);
-        packet->accel_z = 1.0f + 0.2f * sin(accel_sim * 1.3f);
-        packet->gyro_x = 0.1f * cos(accel_sim * 2.0f);
-        packet->gyro_y = 0.1f * sin(accel_sim * 1.5f);
-        packet->gyro_z = 0.05f * cos(accel_sim * 3.0f);
-        packet->button_state = 0;
-        packet->timestamp = time(NULL);
-        
-        if (sim_counter % 200 == 0) {
-            packet->button_state = 1;
-        } else if (sim_counter % 300 == 0) {
-            packet->button_state = 2;
-        }
-        
-        return 1;
+
+    // Simplified simulation with consistent timing
+    static int counter = 0;
+    static time_t last_time = 0;
+    time_t current_time = time(NULL);
+
+    // Only update every 20ms (50Hz)
+    if (current_time == last_time && counter % 5 != 0) {
+        counter++;
+        return 0;
     }
-    
-    return 0;
+
+    last_time = current_time;
+    counter++;
+
+    float t = counter * 0.1f;
+
+    // Generate smooth movement data
+    packet->accel_x = 0.3f * sinf(t);
+    packet->accel_y = 0.2f * cosf(t * 0.7f);
+    packet->accel_z = 1.0f + 0.1f * sinf(t * 1.3f);
+    packet->gyro_x = 0.05f * cosf(t * 2.0f);
+    packet->gyro_y = 0.05f * sinf(t * 1.5f);
+    packet->gyro_z = 0.02f * cosf(t * 3.0f);
+    packet->button_state = (counter % 500 < 10) ? 1 : 0;  // Brief button press every 10 seconds
+    packet->timestamp = current_time;
+
+    return 1;
 }
 
 void disconnect_device(BLEConnection* conn) {
     if (!conn || !conn->dbus_conn) return;
-    
-    if (conn->connected && strlen(conn->char_path) > 0) {
-        call_method(conn->char_path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE, "StopNotify");
-    }
-    
+
     if (conn->connected && strlen(conn->device_path) > 0) {
-        call_method(conn->device_path, BLUEZ_DEVICE_INTERFACE, "Disconnect");
-        syslog(LOG_INFO, "Disconnected from device: %s", conn->device_path);
+        call_dbus_method(conn->device_path, "org.bluez.Device1", "Disconnect");
+        syslog(LOG_INFO, "Disconnected from device");
     }
-    
+
     conn->connected = false;
     memset(conn->device_path, 0, sizeof(conn->device_path));
     memset(conn->service_path, 0, sizeof(conn->service_path));
@@ -352,10 +244,9 @@ void disconnect_device(BLEConnection* conn) {
 
 void cleanup_bluetooth() {
     if (dbus_conn) {
-        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
+        call_dbus_method(ADAPTER_PATH, "org.bluez.Adapter1", "StopDiscovery");
         dbus_connection_unref(dbus_conn);
         dbus_conn = NULL;
     }
-    
-    syslog(LOG_INFO, "BlueZ D-Bus cleanup completed");
+    syslog(LOG_INFO, "Bluetooth cleanup completed");
 }
