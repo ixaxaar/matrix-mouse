@@ -27,12 +27,26 @@ static DBusConnection* dbus_conn = NULL;
 
 static int call_method(const char* path, const char* interface, const char* method) {
     DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, path, interface, method);
-    if (!msg) return -1;
+    if (!msg) {
+        syslog(LOG_ERR, "Failed to create D-Bus message for %s.%s", interface, method);
+        return -1;
+    }
     
-    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 5000, NULL);
+    DBusError error;
+    dbus_error_init(&error);
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 5000, &error);
     dbus_message_unref(msg);
     
-    if (!reply) return -1;
+    if (dbus_error_is_set(&error)) {
+        syslog(LOG_ERR, "D-Bus error calling %s.%s: %s", interface, method, error.message);
+        dbus_error_free(&error);
+        return -1;
+    }
+    
+    if (!reply) {
+        syslog(LOG_ERR, "No reply when calling %s.%s", interface, method);
+        return -1;
+    }
     
     dbus_message_unref(reply);
     return 0;
@@ -139,16 +153,27 @@ int scan_for_device(BLEConnection* conn) {
     conn->scanning = true;
     sleep(5);  // Scan for 5 seconds
     
-    DBusMessage* msg = dbus_message_new_method_call("org.freedesktop.DBus", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
+    DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
     if (!msg) {
+        syslog(LOG_ERR, "Failed to create ObjectManager message");
         call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
         return -1;
     }
     
-    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, NULL);
+    DBusError error;
+    dbus_error_init(&error);
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, &error);
     dbus_message_unref(msg);
     
+    if (dbus_error_is_set(&error)) {
+        syslog(LOG_ERR, "D-Bus error calling ObjectManager.GetManagedObjects: %s", error.message);
+        dbus_error_free(&error);
+        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
+        return -1;
+    }
+    
     if (!reply) {
+        syslog(LOG_ERR, "No reply from ObjectManager.GetManagedObjects");
         call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
         return -1;
     }
@@ -208,7 +233,7 @@ int connect_to_device(BLEConnection* conn) {
     sleep(3);  // Give connection time to establish
     
     // Find GATT service and characteristic
-    DBusMessage* msg = dbus_message_new_method_call("org.freedesktop.DBus", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
+    DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
     if (!msg) return -1;
     
     DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, NULL);
