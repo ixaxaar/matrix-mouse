@@ -16,6 +16,13 @@
 #define BLUEZ_GATT_CHARACTERISTIC_INTERFACE "org.bluez.GattCharacteristic1"
 #define ADAPTER_PATH "/org/bluez/hci0"
 
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+
 static DBusConnection* dbus_conn = NULL;
 
 static int call_method(const char* path, const char* interface, const char* method) {
@@ -33,7 +40,10 @@ static int call_method(const char* path, const char* interface, const char* meth
 
 static int set_property(const char* path, const char* interface, const char* property, bool value) {
     DBusMessage* msg = dbus_message_new_method_call(BLUEZ_SERVICE, path, "org.freedesktop.DBus.Properties", "Set");
-    if (!msg) return -1;
+    if (!msg) {
+        syslog(LOG_ERR, "Failed to create D-Bus message for %s.%s", interface, property);
+        return -1;
+    }
     
     DBusMessageIter iter, variant;
     dbus_message_iter_init_append(msg, &iter);
@@ -41,13 +51,25 @@ static int set_property(const char* path, const char* interface, const char* pro
     dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &property);
     
     dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, DBUS_TYPE_BOOLEAN_AS_STRING, &variant);
-    dbus_message_iter_append_basic(&variant, DBUS_TYPE_BOOLEAN, &value);
+    dbus_bool_t dbus_value = value ? TRUE : FALSE;
+    dbus_message_iter_append_basic(&variant, DBUS_TYPE_BOOLEAN, &dbus_value);
     dbus_message_iter_close_container(&iter, &variant);
     
-    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 5000, NULL);
+    DBusError error;
+    dbus_error_init(&error);
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 5000, &error);
     dbus_message_unref(msg);
     
-    if (!reply) return -1;
+    if (dbus_error_is_set(&error)) {
+        syslog(LOG_ERR, "D-Bus error setting %s.%s: %s", interface, property, error.message);
+        dbus_error_free(&error);
+        return -1;
+    }
+    
+    if (!reply) {
+        syslog(LOG_ERR, "No reply when setting %s.%s", interface, property);
+        return -1;
+    }
     
     dbus_message_unref(reply);
     return 0;
@@ -109,7 +131,7 @@ int scan_for_device(BLEConnection* conn) {
     
     syslog(LOG_INFO, "Starting BLE scan for M5 device");
     
-    if (set_property(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "Discovering", true) != 0) {
+    if (call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StartDiscovery") != 0) {
         syslog(LOG_ERR, "Failed to start scanning");
         return -1;
     }
@@ -119,7 +141,7 @@ int scan_for_device(BLEConnection* conn) {
     
     DBusMessage* msg = dbus_message_new_method_call("org.freedesktop.DBus", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
     if (!msg) {
-        set_property(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "Discovering", false);
+        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
         return -1;
     }
     
@@ -127,7 +149,7 @@ int scan_for_device(BLEConnection* conn) {
     dbus_message_unref(msg);
     
     if (!reply) {
-        set_property(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "Discovering", false);
+        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
         return -1;
     }
     
@@ -164,7 +186,7 @@ int scan_for_device(BLEConnection* conn) {
     }
     
     dbus_message_unref(reply);
-    set_property(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "Discovering", false);
+    call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
     conn->scanning = false;
     
     return found ? 0 : -1;
@@ -305,7 +327,7 @@ void disconnect_device(BLEConnection* conn) {
 
 void cleanup_bluetooth() {
     if (dbus_conn) {
-        set_property(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "Discovering", false);
+        call_method(ADAPTER_PATH, BLUEZ_ADAPTER_INTERFACE, "StopDiscovery");
         dbus_connection_unref(dbus_conn);
         dbus_conn = NULL;
     }
