@@ -49,11 +49,30 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
 
 #### BLE Service Structure
 
-- **Service UUID**: Custom service for sensor data
+- **Service UUID**: `12345678-1234-1234-1234-123456789abc`
+- **Characteristic UUID**: `87654321-4321-4321-4321-cba987654321`
+- **Device Name**: `M5-Mouse-Controller`
 - **Characteristics**:
-  - Sensor Data: Complete IMU readings and button state
-  - Configuration: Settings for sensitivity and filtering
-  - Status: Device status/battery level
+  - Sensor Data: Complete IMU readings and button state (READ, WRITE, NOTIFY properties)
+  - Supports BLE notifications for real-time sensor streaming
+
+#### LED Status Indicators
+
+The 5x5 LED matrix displays connection and activity status:
+
+- **Red**: Advertising/Disconnected (ready for connection)
+- **Orange**: BLE initialization in progress
+- **Yellow**: IMU sensor initialization
+- **Green**: Connected to BLE client
+- **Cyan**: Button press detected (brief flash)
+- **Magenta**: Long button press detected (brief flash)
+
+#### Firmware Implementation Details
+
+- **Update Rate**: 50Hz (20ms delay between sensor packets)
+- **BLE Auto-Reconnect**: Automatically restarts advertising when client disconnects
+- **Sensor Data Logging**: Periodic sensor readings printed every 100 packets (~2 seconds)
+- **Connection Callbacks**: Visual and serial feedback on connection/disconnection events
 
 ### Linux Driver/Daemon
 
@@ -105,9 +124,11 @@ M5 Atom Matrix → BLE → Linux Daemon → uinput → X11/Wayland
 m5-matrix/
 ├── firmware/           # M5 Atom Matrix code
 │   ├── src/
-│   │   ├── main.cpp
-│   │   ├── gesture.cpp
-│   │   └── bluetooth.cpp
+│   │   ├── main.cpp       # Main application loop and BLE server setup
+│   │   ├── sensor.cpp     # IMU sensor reading functions
+│   │   ├── sensor.h       # Sensor interface definitions
+│   │   ├── bluetooth.cpp  # BLE data transmission
+│   │   └── bluetooth.h    # BLE protocol definitions and SensorPacket structure
 │   └── platformio.ini
 ├── driver/            # Linux daemon
 │   ├── src/
