@@ -36,7 +36,7 @@ void setup() {
   Serial.begin(115200);
 
   // Initialize LED matrix - red initially
-  M5.dis.fillpix(0xff6347);
+  M5.dis.fillpix(0xff0000);
 
   Serial.println("\n🚀 M5 Atom Matrix Mouse Controller Starting...");
   Serial.println("📱 Device: M5 Stack Atom Matrix");
