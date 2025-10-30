@@ -17,13 +17,13 @@ bool oldDeviceConnected = false;
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
-      M5.dis.fillpix(0xff0000); // Vivid Mint Green when connected
+      M5.dis.fillpix(0x00ff00); // Vivid Mint Green when connected
       Serial.println("🟢 BLE CLIENT CONNECTED!");
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
-      M5.dis.fillpix(0xff6347); // Tomato Red when disconnected
+      M5.dis.fillpix(0xff0000); // Red when disconnected
       Serial.println("🔴 BLE CLIENT DISCONNECTED!");
     }
 };
@@ -90,7 +90,7 @@ void setup() {
   pAdvertising->setMinPreferred(0x0);
   BLEDevice::startAdvertising();
 
-  M5.dis.fillpix(0xff6347); // Tomato Red = ready/advertising
+  M5.dis.fillpix(0xff0000); // Tomato Red = ready/advertising
   Serial.println("✅ Setup complete! Ready for connections.");
   Serial.println("🔴 LED RED = Advertising/Disconnected");
   Serial.println("🟢 LED GREEN = Connected");
@@ -124,7 +124,7 @@ void loop() {
     // Button released
     Serial.println("🖱️ BUTTON released");
     sendSensorData(0); // Release
-    M5.dis.fillpix(deviceConnected ? 0xff0000 : 0xff6347);
+    M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
   }
 
   lastButtonState = currentButtonState;
