@@ -11,6 +11,9 @@ BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
+/**
+ * BLE Server Callbacks to handle connection events
+ */
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
@@ -25,6 +28,9 @@ class MyServerCallbacks: public BLEServerCallbacks {
     }
 };
 
+/**
+ * Setup function: initialize M5, IMU, and Bluetooth
+ */
 void setup() {
   M5.begin(true, false, true);
   Serial.begin(115200);
@@ -91,6 +97,9 @@ void setup() {
   Serial.println("🔘 Button: Short press = Left click, Long press = Right click\n");
 }
 
+/**
+ * Main loop: handle button presses and send sensor data
+ */
 void loop() {
   M5.update();
 
@@ -100,14 +109,21 @@ void loop() {
 
   if (currentButtonState && !lastButtonState) {
     // Button pressed
-    Serial.println("🖱️ LEFT CLICK pressed");
+    Serial.println("🖱️ BUTTON pressed");
     sendSensorData(1); // Left click
     M5.dis.fillpix(0x00ffff); // Cyan flash for click
     delay(50);
     M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
-  } else if (!currentButtonState && lastButtonState) {
-    // Button released  
-    Serial.println("🖱️ LEFT CLICK released");
+  } else if (currentButtonState && lastButtonState) {
+    // Long press
+    sendSensorData(2); // Long press
+    M5.dis.fillpix(0xff00ff); // Magenta for long press
+    Serial.println("🖱️ BUTTON still pressed");
+    delay(50);
+  }
+  else if (!currentButtonState && lastButtonState) {
+    // Button released
+    Serial.println("🖱️ BUTTON released");
     sendSensorData(0); // Release
   }
 

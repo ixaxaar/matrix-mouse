@@ -7,6 +7,9 @@ void initSensor() {
     // M5.IMU is initialized in M5.begin()
 }
 
+/**
+ * Get accelerometer and gyroscope data
+ */
 void getSensorData(float* accel_x, float* accel_y, float* accel_z,
                    float* gyro_x, float* gyro_y, float* gyro_z) {
 

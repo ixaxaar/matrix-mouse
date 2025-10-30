@@ -7,6 +7,10 @@ void initBluetooth() {
     Serial.println("📶 BLE ready for peripheral mode");
 }
 
+/**
+ * Send sensor data packet over BLE
+ * buttonState: 0 = no click, 1 = left click, 2 = right click
+ */
 void sendSensorData(uint8_t buttonState) {
     if (!deviceConnected || !pCharacteristic) return;
 
@@ -24,10 +28,10 @@ void sendSensorData(uint8_t buttonState) {
     pCharacteristic->notify();
 
     if (buttonState > 0) {
-        Serial.printf("📤 Sending click data: %s\\n", 
-                     buttonState == 1 ? "LEFT CLICK" : "RIGHT CLICK");
+        Serial.printf("📤 Sending button press data: %s\\n",
+                     buttonState == 1 ? "BUTTON PRESS" : "LONG PRESS");
     }
-    
+
     // Periodically show sensor data (every 100 packets ~2 seconds)
     static int packetCount = 0;
     if (buttonState == 0 && ++packetCount % 100 == 0) {
