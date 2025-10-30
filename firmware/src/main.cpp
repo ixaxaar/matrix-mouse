@@ -111,20 +111,20 @@ void loop() {
     // Button pressed
     Serial.println("🖱️ BUTTON pressed");
     sendSensorData(1); // Left click
-    M5.dis.fillpix(0x00ffff); // Cyan flash for click
-    delay(50);
-    M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
+    M5.dis.fillpix(0x00ffff); // Cyan for click
+    delay(200); // Debounce
   } else if (currentButtonState && lastButtonState) {
     // Long press
     sendSensorData(2); // Long press
     M5.dis.fillpix(0xff00ff); // Magenta for long press
     Serial.println("🖱️ BUTTON still pressed");
-    delay(50);
+    delay(200); // Debounce
   }
   else if (!currentButtonState && lastButtonState) {
     // Button released
     Serial.println("🖱️ BUTTON released");
     sendSensorData(0); // Release
+    M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
   }
 
   lastButtonState = currentButtonState;
