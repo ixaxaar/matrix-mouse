@@ -17,13 +17,13 @@ bool oldDeviceConnected = false;
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
-      M5.dis.fillpix(0x00ff00); // Green when connected
+      M5.dis.fillpix(0xff0000); // Vivid Mint Green when connected
       Serial.println("🟢 BLE CLIENT CONNECTED!");
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
-      M5.dis.fillpix(0xff0000); // Red when disconnected
+      M5.dis.fillpix(0xff6347); // Tomato Red when disconnected
       Serial.println("🔴 BLE CLIENT DISCONNECTED!");
     }
 };
@@ -36,7 +36,7 @@ void setup() {
   Serial.begin(115200);
 
   // Initialize LED matrix - red initially
-  M5.dis.fillpix(0xff0000);
+  M5.dis.fillpix(0xff6347);
 
   Serial.println("\n🚀 M5 Atom Matrix Mouse Controller Starting...");
   Serial.println("📱 Device: M5 Stack Atom Matrix");
@@ -45,13 +45,13 @@ void setup() {
   // Initialize IMU
   Serial.println("⚡ Initializing IMU sensor...");
   initSensor();
-  M5.dis.fillpix(0xffff00); // Yellow during init
+  M5.dis.fillpix(0xfff078); // Pastel Yellow during init
   delay(100);
 
   // Initialize Bluetooth
   Serial.println("🔵 Initializing Bluetooth...");
   initBluetooth();
-  M5.dis.fillpix(0xff8000); // Orange during BLE init
+  M5.dis.fillpix(0xffb347); // Pastel Orange during BLE init
   delay(100);
 
   // Create BLE Device
@@ -90,7 +90,7 @@ void setup() {
   pAdvertising->setMinPreferred(0x0);
   BLEDevice::startAdvertising();
 
-  M5.dis.fillpix(0xff0000); // Red = ready/advertising
+  M5.dis.fillpix(0xff6347); // Tomato Red = ready/advertising
   Serial.println("✅ Setup complete! Ready for connections.");
   Serial.println("🔴 LED RED = Advertising/Disconnected");
   Serial.println("🟢 LED GREEN = Connected");
@@ -111,7 +111,7 @@ void loop() {
     // Button pressed
     Serial.println("🖱️ BUTTON pressed");
     sendSensorData(1); // Left click
-    M5.dis.fillpix(0x00ffff); // Cyan for click
+    M5.dis.fillpix(0x48d1cc); // Medium Turquoise for click
     delay(200); // Debounce
   } else if (currentButtonState && lastButtonState) {
     // Long press
@@ -124,7 +124,7 @@ void loop() {
     // Button released
     Serial.println("🖱️ BUTTON released");
     sendSensorData(0); // Release
-    M5.dis.fillpix(deviceConnected ? 0x00ff00 : 0xff0000);
+    M5.dis.fillpix(deviceConnected ? 0xff0000 : 0xff6347);
   }
 
   lastButtonState = currentButtonState;
