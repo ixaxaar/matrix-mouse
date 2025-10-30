@@ -1,7 +1,7 @@
 .PHONY: all firmware driver clean install uninstall test help
 
 # Default target
-all: firmware driver
+all: help
 
 # Build firmware
 firmware:
