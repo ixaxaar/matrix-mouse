@@ -32,8 +32,9 @@ class MyServerCallbacks: public BLEServerCallbacks {
  * Setup function: initialize M5, IMU, and Bluetooth
  */
 void setup() {
-  M5.begin(true, false, true);
+  M5.begin(true, false, true);  // SerialEnable, I2CEnable, DisplayEnable
   Serial.begin(115200);
+  delay(50);  // Give hardware time to stabilize
 
   // Initialize LED matrix - red initially
   M5.dis.fillpix(0xff0000);
@@ -42,10 +43,12 @@ void setup() {
   Serial.println("📱 Device: M5 Stack Atom Matrix");
   Serial.println("🎯 Mode: Bluetooth Mouse Controller");
 
-  // Initialize IMU
+  // Initialize IMU - M5.IMU.Init() is called by M5.begin()
   Serial.println("⚡ Initializing IMU sensor...");
+  M5.IMU.Init();  // Explicitly initialize IMU
+  delay(200);  // Give IMU time to stabilize
   initSensor();
-  M5.dis.fillpix(0xfff078); // Pastel Yellow during init
+  M5.dis.fillpix(0xffff00); // Yellow during init
   delay(100);
 
   // Initialize Bluetooth
@@ -130,8 +133,8 @@ void loop() {
   lastButtonState = currentButtonState;
 
   // Send sensor data continuously when connected
-  if (deviceConnected) {
-    sendSensorData(0); // Normal sensor data
+  if (deviceConnected && !currentButtonState) {
+    sendSensorData(0); // Normal sensor data (only when button not pressed)
   }
 
   // Handle disconnection

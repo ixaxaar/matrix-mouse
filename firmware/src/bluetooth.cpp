@@ -35,7 +35,7 @@ void sendSensorData(uint8_t buttonState) {
     // Periodically show sensor data (every 100 packets ~2 seconds)
     static int packetCount = 0;
     if (buttonState == 0 && ++packetCount % 100 == 0) {
-        Serial.printf("📊 Sensor data - Accel: %.2f,%.2f,%.2f | Gyro: %.2f,%.2f,%.2f\\n",
+        Serial.printf("📊 Sensor data - Accel: %.2f,%.2f,%.2f | Gyro: %.2f,%.2f,%.2f \n",
                      packet.accel_x, packet.accel_y, packet.accel_z,
                      packet.gyro_x, packet.gyro_y, packet.gyro_z);
     }
