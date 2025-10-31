@@ -1,13 +1,10 @@
 # M5 Atom Matrix Mouse Controller Configuration
 
 # Movement sensitivity (multiplier for accelerometer values)
-movement_sensitivity: 20.0
+movement_sensitivity: 1000.0
 
 # Dead zone threshold (ignore small movements below this value)
 dead_zone: 0.1
-
-# Scroll threshold (minimum Z-axis value to trigger scrolling)
-scroll_threshold: 0.3
 
 # Invert axis directions
 invert_x: false

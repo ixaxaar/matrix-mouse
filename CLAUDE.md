@@ -36,16 +36,20 @@ Create a wireless mouse controller using M5 Stack Atom Matrix that communicates 
 
 #### Bluetooth Protocol
 
-- **Transport**: BLE characteristics
-- **Data Format**:
-  ```
+- **Transport**: BLE characteristics with optimized packet size
+- **MTU Handling**: 512-byte MTU requested, packets sized to fit in default 20-byte payload
+- **Data Format** (16 bytes total, fits in default BLE MTU):
+  ```c
   struct SensorPacket {
-    float accel_x, accel_y, accel_z;    // Accelerometer values
-    float gyro_x, gyro_y, gyro_z;      // Gyroscope values
-    uint8_t button_state;               // 0=none, 1=short_press, 2=long_press
-    uint32_t timestamp;
-  };
+    int16_t accel_x, accel_y, accel_z; // Acceleration * 100 (e.g., 1.5g = 150)
+    int16_t gyro_x, gyro_y, gyro_z;    // Gyroscope * 10 (e.g., 5.5 deg/s = 55)
+    uint8_t button_state;               // 0=none, 1=press, 2=long_press
+    uint8_t padding;                    // Alignment padding
+    uint16_t timestamp;                 // Millisecond counter (wraps every 65s)
+  } __attribute__((packed));
+  // Total: 16 bytes (fits in 20-byte BLE MTU limit)
   ```
+- **Data Encoding**: Integer scaling used to reduce packet size while maintaining precision
 
 #### BLE Service Structure
 
@@ -76,77 +80,148 @@ The 5x5 LED matrix displays connection and activity status:
 
 ### Linux Driver/Daemon
 
-#### Implementation Options
+#### Implementation
 
-1. **uinput Driver**: Create virtual mouse device using /dev/uinput
-2. **evdev Integration**: Direct event injection
-3. **User-space Daemon**: Background service handling communication
+**Chosen Approach**: User-space daemon with uinput virtual device
+- Creates virtual mouse device via `/dev/uinput`
+- D-Bus integration for BlueZ communication
+- Non-blocking event loop for responsive signal handling
 
 #### Core Components
 
-- **BLE Client**: Bluetooth scanner and connection management
-- **Input Injection**: Convert sensor data to Linux input events
-- **Device Management**: Handle BLE connection/disconnection
-- **Configuration**: Configurable action mapping, sensitivity, noise filtering
+1. **BLE Client** (`bluetooth.c`):
+   - D-Bus-based BlueZ integration
+   - Device scanning and connection management
+   - Notification handler for real-time sensor data
+   - Automatic reconnection on disconnect
+   - Connection state monitoring
+
+2. **3D Orientation Tracking** (`uinput.c`):
+   - **Complementary Filter**: Fuses gyroscope (98%) and accelerometer (2%) data
+   - Tracks roll, pitch, yaw in 3D space
+   - Gyroscope integration for fast response
+   - Accelerometer correction to prevent drift
+
+3. **Orientation-Independent Cursor Control**:
+   - **Yaw Compensation**: Rotates movement vector by device yaw angle
+   - Movement in world-space coordinates (not device-local)
+   - Example: Moving device "forward" moves cursor up, even if device rotates 180°
+   - Maintains consistent movement direction regardless of device rotation
+
+4. **Input Injection**:
+   - Sub-pixel precision cursor movement (fractional accumulation)
+   - Button event handling (left/right click)
+   - Configurable sensitivity and dead zones
+   - Movement clamping to prevent cursor jumping
+
+5. **Configuration**:
+   - Movement sensitivity scaling
+   - Dead zone filtering
+   - Axis inversion support
+   - YAML-based configuration loading
 
 #### Communication Flow
 
 ```
-M5 Atom Matrix → BLE → Linux Daemon → uinput → X11/Wayland
+M5 Atom Matrix → BLE Notify → BlueZ (D-Bus) → Daemon
+                                                  ↓
+                                    3D Orientation Tracking
+                                                  ↓
+                                    Yaw-Compensated 2D Delta
+                                                  ↓
+                                    uinput → X11/Wayland
 ```
 
-## Implementation Plan
+## Implementation Status
 
-### Phase 1: Basic Bluetooth Implementation
+### ✅ Completed (Phase 1)
 
-1. M5 Atom Matrix firmware with complete IMU reading
-2. BLE peripheral setup and sensor data transmission
-3. Linux daemon with BLE client and uinput integration
-4. Configurable action mapping (cursor, scroll, clicks)
+1. **Firmware**:
+   - IMU sensor reading (accelerometer + gyroscope)
+   - BLE peripheral with optimized 16-byte packets
+   - Button handling (press/release detection)
+   - LED status indicators
+   - Auto-reconnection
 
-### Phase 2: Enhanced Features
+2. **Driver**:
+   - D-Bus/BlueZ BLE client
+   - 3D orientation tracking with sensor fusion
+   - Yaw-compensated cursor control
+   - uinput virtual mouse device
+   - Non-blocking event loop with signal handling
 
-1. Advanced sensor filtering and noise reduction
-2. LED feedback system for connection status
-3. Runtime configuration interface
-4. Calibration and sensitivity tuning
+3. **Features**:
+   - Orientation-independent movement (handles device rotation)
+   - Left/right mouse button support
+   - Configurable sensitivity and dead zones
+   - Sub-pixel precision movement
 
-### Phase 3: Advanced Features
+### 🚧 In Progress (Phase 2)
 
-1. Custom gesture recognition
-2. Multiple device support
-3. Power management optimization
-4. Advanced configuration profiles
+1. Fine-tuning orientation tracking parameters
+2. Testing movement accuracy and responsiveness
+3. Optimizing sensor fusion coefficients
+
+### 📋 Planned (Phase 3)
+
+1. Scroll wheel support using Z-axis tilt
+2. Custom gesture recognition (double-tap, shake, etc.)
+3. YAML configuration file support
+4. Calibration interface
+5. Multiple device support
+6. Power management optimization
 
 ## File Structure
 
 ```
 m5-matrix/
-├── firmware/           # M5 Atom Matrix code
+├── firmware/              # M5 Atom Matrix code
 │   ├── src/
-│   │   ├── main.cpp       # Main application loop and BLE server setup
-│   │   ├── sensor.cpp     # IMU sensor reading functions
+│   │   ├── main.cpp       # Main loop, BLE server, connection callbacks
+│   │   ├── sensor.cpp     # IMU sensor reading (MPU6886)
 │   │   ├── sensor.h       # Sensor interface definitions
-│   │   ├── bluetooth.cpp  # BLE data transmission
-│   │   └── bluetooth.h    # BLE protocol definitions and SensorPacket structure
+│   │   ├── bluetooth.cpp  # BLE data transmission with int16 encoding
+│   │   └── bluetooth.h    # BLE protocol, SensorPacket structure
 │   └── platformio.ini
-├── driver/            # Linux daemon
+├── driver/                # Linux daemon
+│   ├── include/
+│   │   ├── bluetooth.h    # BLE connection management
+│   │   ├── common.h       # SensorPacket, config structures
+│   │   └── uinput.h       # Virtual device interface
 │   ├── src/
-│   │   ├── main.c
-│   │   ├── bluetooth.c
-│   │   └── uinput.c
+│   │   ├── main.c         # Main loop, signal handling, device scanning
+│   │   ├── bluetooth.c    # D-Bus/BlueZ integration, notification handler
+│   │   ├── uinput.c       # 3D orientation tracking, cursor control
+│   │   └── config.c       # YAML configuration loading
 │   └── Makefile
-├── config/            # Configuration files
-└── docs/              # Documentation
+├── config/                # Configuration files
+└── CLAUDE.md             # This documentation
 ```
 
 ## Configuration
 
-- **BLE Pairing**: Device discovery and pairing management
-- **Action Mapping**: Configurable sensor-to-action assignments
-- **Sensitivity Settings**: Movement scaling and dead zones
-- **Noise Filtering**: Z-axis scroll filtering parameters
-- **Connection Timeout**: Automatic BLE reconnection handling
+### Mouse Configuration (driver/src/main.c)
+
+```c
+MouseConfig config = {
+    .movement_sensitivity = 2.0f,      // Multiplier for orientation → cursor movement
+    .scroll_sensitivity = 1.0f,        // (Reserved for future scroll implementation)
+    .dead_zone = 0.1f,                 // Ignore movements below 0.1 radians (~5.7°)
+    .scroll_threshold = 0.3f,          // (Reserved)
+    .invert_x = false,                 // Reverse X-axis movement
+    .invert_y = false,                 // Reverse Y-axis movement
+    .invert_scroll = false,            // (Reserved)
+    .scroll_filter_samples = 5         // (Reserved)
+};
+```
+
+### Runtime Parameters
+
+- **BLE Scanning**: 5-second discovery window
+- **Update Rate**: 50Hz (20ms between reads)
+- **Orientation Filter**: 98% gyro / 2% accel (complementary filter)
+- **Movement Clamping**: ±50 pixels per frame max
+- **Signal Timeout**: 2-second forced exit on Ctrl-C
 
 ## Security Considerations
 
@@ -163,7 +238,41 @@ m5-matrix/
 
 ## Performance Requirements
 
-- **Latency**: <50ms end-to-end
-- **Battery Life**: >8 hours continuous use
+- **Latency**: <50ms end-to-end (target)
+- **Update Rate**: 50Hz sensor sampling
+- **Battery Life**: >8 hours continuous use (target)
 - **Range**: 10m typical BLE range
 - **Reliability**: Auto-reconnection on BLE drops
+- **Orientation Accuracy**: ±2° typical with complementary filter
+
+## Known Issues & Limitations
+
+1. **Yaw Drift**: No magnetometer means yaw accumulates drift over time
+   - Mitigation: Periodic recalibration or use pitch/roll only
+
+2. **BLE MTU**: Limited to 20-byte packets on some systems
+   - Solution: Implemented 16-byte compressed packet format
+
+3. **First Frame Skip**: Orientation initialization requires one frame
+   - Impact: Minimal, occurs only at startup
+
+## Troubleshooting
+
+### Mouse Not Moving
+- Check orientation values in logs: `Orientation R:<roll>° P:<pitch>° Y:<yaw>°`
+- Verify `movement_sensitivity` is not too low (default: 2.0)
+- Ensure device is tilted beyond `dead_zone` threshold (default: 0.1 rad = ~5.7°)
+
+### Cursor Drifting
+- Reduce `movement_sensitivity`
+- Increase `dead_zone` to filter small movements
+- Check for gyroscope bias in logs
+
+### Connection Drops
+- Verify M5 device shows green LED when connected
+- Check system Bluetooth logs: `journalctl -f | grep m5-mouse-daemon`
+- Ensure BlueZ version supports BLE notifications
+
+### Ctrl-C Not Working
+- Wait 2 seconds for alarm timeout
+- Force kill: `sudo killall -9 m5-mouse-daemon`

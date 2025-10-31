@@ -26,13 +26,15 @@ static inline void emit_event(int fd, int type, int code, int value) {
 static inline void emit_sync(int fd) { emit_event(fd, EV_SYN, SYN_REPORT, 0); }
 static uint8_t last_button_state = 0;
 
-// IMU filter state
+// IMU state for position tracking
 typedef struct {
     double t_last;
-    float roll, pitch, yaw;
-    float gxf, gyf, gzf;
+    float cursor_x, cursor_y;     // Virtual cursor position (accumulated)
+    float accel_x_smooth, accel_y_smooth;  // Low-pass filtered accelerometer
     int initialized;
 } ImuFilterState;
+
+static ImuFilterState imu_state = {0};
 
 static inline double now_s() {
     struct timespec ts;
@@ -81,10 +83,6 @@ err:
 void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     if (!device || !device->initialized || !packet) return;
 
-    // Convert int16 back to floats
-    float accel_x = packet->accel_x / 100.0f;
-    float accel_z = packet->accel_z / 100.0f;
-
     // Handle button events
     if (packet->button_state != last_button_state) {
         // Reset last button state
@@ -117,39 +115,86 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
         last_button_state = packet->button_state;
     }
 
-    // Calculate tilt angles from accelerometer
-    // When device is flat: accel_y ≈ -1.0g (gravity), accel_x ≈ 0, accel_z ≈ 0
-    // Tilt left/right changes accel_x, tilt forward/back changes accel_z
+    // Convert int16 back to floats
+    float accel_x = packet->accel_x / 100.0f;  // g
+    float accel_y = packet->accel_y / 100.0f;  // g
+    // accel_z ignored for now (could be used for scroll or 3D tracking later)
 
-    // Remove the gravity component from Y axis
-    float tilt_x = accel_x;  // Left/Right tilt (positive = tilt right)
-    float tilt_z = accel_z;  // Forward/Back tilt (positive = tilt forward)
+    // Get time delta
+    double t_now = now_s();
+    float dt = imu_state.initialized ? (float)(t_now - imu_state.t_last) : 0.02f;
+    imu_state.t_last = t_now;
 
-    // Apply dead zone to reduce jitter
-    if (fabsf(tilt_x) < config.dead_zone) tilt_x = 0.0f;
-    if (fabsf(tilt_z) < config.dead_zone) tilt_z = 0.0f;
-
-    // Calculate mouse movement deltas
-    // Map tilt to cursor movement: tilt right = move right, tilt forward = move up
-    int dx = 0, dy = 0;
-
-    if (tilt_x != 0.0f || tilt_z != 0.0f) {
-        // Apply sensitivity and invert if configured
-        dx = (int)(tilt_x * config.movement_sensitivity * (config.invert_x ? -1 : 1));
-        dy = (int)(-tilt_z * config.movement_sensitivity * (config.invert_y ? -1 : 1));
-
-        // Clamp to reasonable values to prevent jumping
-        if (dx > 50) dx = 50;
-        if (dx < -50) dx = -50;
-        if (dy > 50) dy = 50;
-        if (dy < -50) dy = -50;
+    if (!imu_state.initialized) {
+        // Initialize state
+        imu_state.cursor_x = 0.0f;
+        imu_state.cursor_y = 0.0f;
+        imu_state.accel_x_smooth = accel_x;
+        imu_state.accel_y_smooth = accel_y;
+        imu_state.initialized = 1;
+        return;  // Skip first frame
     }
+
+    // Low-pass filter to smooth accelerometer readings
+    const float ACCEL_SMOOTH = 0.8f;  // 0.8 = keep 80% of old value, add 20% new
+    imu_state.accel_x_smooth = ACCEL_SMOOTH * imu_state.accel_x_smooth + (1.0f - ACCEL_SMOOTH) * accel_x;
+    imu_state.accel_y_smooth = ACCEL_SMOOTH * imu_state.accel_y_smooth + (1.0f - ACCEL_SMOOTH) * accel_y;
+
+    // Use smoothed accelerometer as direct input (tilt-based control)
+    // When device tilts right, accel_x increases (gravity component shifts)
+    // This is more stable than trying to track translation
+    float tilt_x = imu_state.accel_x_smooth;
+    float tilt_y = imu_state.accel_y_smooth;
+
+    // Debug: log raw values
+    static int debug_count = 0;
+    if (++debug_count % 10 == 0) {  // Every 10 frames (~200ms)
+        syslog(LOG_INFO, "RAW: accel(%.3f, %.3f) smooth(%.3f, %.3f) deadzone:%.3f",
+               accel_x, accel_y, tilt_x, tilt_y, config.dead_zone);
+    }
+
+    // Apply dead zone to filter small tilts
+    if (fabsf(tilt_x) < config.dead_zone) tilt_x = 0.0f;
+    if (fabsf(tilt_y) < config.dead_zone) tilt_y = 0.0f;
+
+    // Map tilt directly to cursor velocity (simpler and more stable)
+    // Tilt right (+X) → cursor moves right
+    // Tilt forward (+Y) → cursor moves up
+    float scale = config.movement_sensitivity * 50.0f;  // Much lower scale
+    imu_state.cursor_x += tilt_x * scale * dt;
+    imu_state.cursor_y += tilt_y * scale * dt;
+
+    // Debug cursor accumulation
+    if (debug_count % 10 == 0) {
+        syslog(LOG_INFO, "TILT: (%.3f, %.3f) cursor_accum: (%.2f, %.2f) scale:%.1f dt:%.4f",
+               tilt_x, tilt_y, imu_state.cursor_x, imu_state.cursor_y, scale, dt);
+    }
+
+    // Extract integer deltas for mouse movement
+    int dx = (int)(imu_state.cursor_x);
+    int dy = (int)(imu_state.cursor_y);
+
+    // Subtract integer part from accumulated position (keep fractional part for smoothness)
+    imu_state.cursor_x -= (float)dx;
+    imu_state.cursor_y -= (float)dy;
+
+    // Apply invert settings
+    if (config.invert_x) dx = -dx;
+    if (config.invert_y) dy = -dy;
+
+    // Clamp to reasonable values to prevent jumping
+    if (dx > 50) dx = 50;
+    if (dx < -50) dx = -50;
+    if (dy > 50) dy = 50;
+    if (dy < -50) dy = -50;
 
     // Log periodically (every 50 packets ~1 second)
     static int log_count = 0;
     if (++log_count % 50 == 0) {
-        syslog(LOG_INFO, "Tilt X: %.2f Z: %.2f -> dx: %d dy: %d",
-               tilt_x, tilt_z, dx, dy);
+        syslog(LOG_INFO, "Tilt: (%.2f, %.2f) | Cursor: (%.2f, %.2f) -> dx:%d dy:%d",
+               tilt_x, tilt_y,
+               imu_state.cursor_x, imu_state.cursor_y,
+               dx, dy);
     }
 
     // Send mouse movement if there's any delta
