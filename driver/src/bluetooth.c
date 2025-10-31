@@ -195,37 +195,73 @@ int connect_to_device(BLEConnection* conn) {
 }
 
 int read_sensor_data(BLEConnection* conn, SensorPacket* packet) {
-    if (!conn || !packet || !conn->connected) {
+    if (!conn || !packet || !conn->connected || !conn->dbus_conn) {
         return -1;
     }
 
-    // Simplified simulation with consistent timing
-    static int counter = 0;
-    static time_t last_time = 0;
-    time_t current_time = time(NULL);
-
-    // Only update every 20ms (50Hz)
-    if (current_time == last_time && counter % 5 != 0) {
-        counter++;
-        return 0;
+    // Read actual BLE characteristic value
+    if (strlen(conn->char_path) == 0) {
+        // Need to find the characteristic path first
+        syslog(LOG_ERR, "Characteristic path not set");
+        return -1;
     }
 
-    last_time = current_time;
-    counter++;
+    DBusMessage* msg = dbus_message_new_method_call(
+        BLUEZ_SERVICE, conn->char_path,
+        "org.freedesktop.DBus.Properties", "Get");
+    if (!msg) return -1;
 
-    float t = counter * 0.1f;
+    const char* interface = "org.bluez.GattCharacteristic1";
+    const char* property = "Value";
 
-    // Generate smooth movement data
-    packet->accel_x = 0.3f * sinf(t);
-    packet->accel_y = 0.2f * cosf(t * 0.7f);
-    packet->accel_z = 1.0f + 0.1f * sinf(t * 1.3f);
-    packet->gyro_x = 0.05f * cosf(t * 2.0f);
-    packet->gyro_y = 0.05f * sinf(t * 1.5f);
-    packet->gyro_z = 0.02f * cosf(t * 3.0f);
-    packet->button_state = (counter % 500 < 10) ? 1 : 0;  // Brief button press every 10 seconds
-    packet->timestamp = current_time;
+    DBusMessageIter iter;
+    dbus_message_iter_init_append(msg, &iter);
+    dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &interface);
+    dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &property);
 
-    return 1;
+    DBusError error;
+    dbus_error_init(&error);
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+        conn->dbus_conn, msg, 5000, &error);
+    dbus_message_unref(msg);
+
+    if (dbus_error_is_set(&error)) {
+        syslog(LOG_ERR, "Failed to read characteristic: %s", error.message);
+        dbus_error_free(&error);
+        return -1;
+    }
+
+    if (!reply) return -1;
+
+    // Parse the byte array from D-Bus
+    DBusMessageIter reply_iter, variant_iter, array_iter;
+    dbus_message_iter_init(reply, &reply_iter);
+    dbus_message_iter_recurse(&reply_iter, &variant_iter);
+
+    if (dbus_message_iter_get_arg_type(&variant_iter) != DBUS_TYPE_ARRAY) {
+        dbus_message_unref(reply);
+        return -1;
+    }
+
+    dbus_message_iter_recurse(&variant_iter, &array_iter);
+
+    uint8_t buffer[sizeof(SensorPacket)];
+    int idx = 0;
+
+    while (dbus_message_iter_get_arg_type(&array_iter) == DBUS_TYPE_BYTE &&
+           idx < (int)sizeof(SensorPacket)) {
+        dbus_message_iter_get_basic(&array_iter, &buffer[idx++]);
+        dbus_message_iter_next(&array_iter);
+    }
+
+    dbus_message_unref(reply);
+
+    if (idx == sizeof(SensorPacket)) {
+        memcpy(packet, buffer, sizeof(SensorPacket));
+        return 1;
+    }
+
+    return 0;
 }
 
 void disconnect_device(BLEConnection* conn) {
