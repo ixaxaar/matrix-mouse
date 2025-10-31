@@ -11,22 +11,12 @@ static void parse_yaml_value(const char* key, yaml_node_t* value_node) {
 
         if (strcmp(key, "movement_sensitivity") == 0) {
             config.movement_sensitivity = atof(value);
-        } else if (strcmp(key, "scroll_sensitivity") == 0) {
-            config.scroll_sensitivity = atof(value);
         } else if (strcmp(key, "dead_zone") == 0) {
             config.dead_zone = atof(value);
-        } else if (strcmp(key, "scroll_threshold") == 0) {
-            config.scroll_threshold = atof(value);
         } else if (strcmp(key, "invert_x") == 0) {
             config.invert_x = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         } else if (strcmp(key, "invert_y") == 0) {
             config.invert_y = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
-        } else if (strcmp(key, "invert_scroll") == 0) {
-            config.invert_scroll = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
-        } else if (strcmp(key, "scroll_filter_samples") == 0) {
-            config.scroll_filter_samples = atoi(value);
-            if (config.scroll_filter_samples < 1) config.scroll_filter_samples = 1;
-            if (config.scroll_filter_samples > 10) config.scroll_filter_samples = 10;
         }
     }
 }
