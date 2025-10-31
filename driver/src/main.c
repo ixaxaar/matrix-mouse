@@ -25,9 +25,14 @@ MouseConfig config = {
 bool running = true;
 
 void signal_handler(int sig) {
-    (void)sig;
+    if (sig == SIGALRM) {
+        syslog(LOG_ERR, "Forced exit due to timeout");
+        exit(1);
+    }
     running = false;
-    syslog(LOG_INFO, "Received signal, shutting down...");
+    syslog(LOG_INFO, "Received signal %d, shutting down...", sig);
+    // Force exit if we can't gracefully shutdown in 2 seconds
+    alarm(2);
 }
 
 void print_usage(const char* program_name) {
@@ -79,6 +84,7 @@ int main(int argc, char* argv[]) {
     // Setup signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    signal(SIGALRM, signal_handler);
 
     if (daemon_mode) {
         // Daemonize

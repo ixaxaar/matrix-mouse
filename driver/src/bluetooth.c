@@ -218,6 +218,7 @@ static DBusHandlerResult notification_handler(DBusConnection* conn, DBusMessage*
 
         // Check if this is our characteristic
         if (path && strcmp(path, ble_conn->char_path) == 0) {
+
             DBusMessageIter iter, dict_iter, entry_iter, variant_iter, array_iter;
             dbus_message_iter_init(msg, &iter);
 
@@ -252,8 +253,10 @@ static DBusHandlerResult notification_handler(DBusConnection* conn, DBusMessage*
                         if (idx == sizeof(SensorPacket)) {
                             memcpy(&ble_conn->last_packet, buffer, sizeof(SensorPacket));
                             ble_conn->packet_ready = true;
+                            // syslog(LOG_DEBUG, "Full packet received: %d bytes, packet_ready=%d",
+                            //        idx, ble_conn->packet_ready);
                         } else if (idx > 0) {
-                            syslog(LOG_DEBUG, "Received partial packet: %d bytes (expected %zu)",
+                            syslog(LOG_INFO, "Received partial packet: %d bytes (expected %zu)",
                                    idx, sizeof(SensorPacket));
                         }
                     }
@@ -360,17 +363,22 @@ int connect_to_device(BLEConnection* conn) {
     }
 
     // Enable notifications
+    DBusError error;
+    dbus_error_init(&error);
     DBusMessage* notify_msg = dbus_message_new_method_call(
         BLUEZ_SERVICE, conn->char_path, "org.bluez.GattCharacteristic1", "StartNotify");
     if (notify_msg) {
         DBusMessage* notify_reply = dbus_connection_send_with_reply_and_block(
-            dbus_conn, notify_msg, 5000, NULL);
+            dbus_conn, notify_msg, 5000, &error);
         dbus_message_unref(notify_msg);
-        if (notify_reply) {
+        if (dbus_error_is_set(&error)) {
+            syslog(LOG_ERR, "Failed to enable notifications: %s", error.message);
+            dbus_error_free(&error);
+        } else if (notify_reply) {
             dbus_message_unref(notify_reply);
-            syslog(LOG_INFO, "Notifications enabled");
+            syslog(LOG_INFO, "Notifications enabled successfully");
         } else {
-            syslog(LOG_WARNING, "Failed to enable notifications");
+            syslog(LOG_WARNING, "Failed to enable notifications (no reply)");
         }
     }
 
@@ -400,6 +408,7 @@ int connect_to_device(BLEConnection* conn) {
 
 int read_sensor_data(BLEConnection* conn, SensorPacket* packet) {
     if (!conn || !packet || !conn->connected || !conn->dbus_conn) {
+        syslog(LOG_ERR, "read_sensor_data: invalid params");
         return -1;
     }
 
@@ -408,8 +417,8 @@ int read_sensor_data(BLEConnection* conn, SensorPacket* packet) {
         return -1;
     }
 
-    // Process any pending D-Bus messages
-    while (dbus_connection_read_write_dispatch(conn->dbus_conn, 0));
+    // Use timeout of 0 to make it non-blocking and allow signal handling
+    dbus_connection_read_write_dispatch(conn->dbus_conn, 0);
 
     // Check if we have a new packet
     if (conn->packet_ready) {

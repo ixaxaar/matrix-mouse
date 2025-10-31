@@ -94,7 +94,7 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
 
     int dx = 0, dy = 0;
 
-    syslog(LOG_DEBUG, "Raw IMU data - Accel: %.2f,%.2f,%.2f Gyro: %.2f,%.2f,%.2f Button: %d",
+    syslog(LOG_INFO, "Raw IMU data - Accel: %.2f,%.2f,%.2f Gyro: %.2f,%.2f,%.2f Button: %d",
            accel_x, accel_y, accel_z,
            gyro_x, gyro_y, gyro_z, packet->button_state);
 
