@@ -6,15 +6,19 @@
 #include <dbus/dbus.h>
 #include "common.h"
 
+#define SERVICE_UUID "12345678-1234-1234-1234-123456789abc"
+#define CHARACTERISTIC_UUID "87654321-4321-4321-4321-cba987654321"
+
 typedef struct {
-    DBusConnection* dbus_conn;
     char device_path[256];
-    char device_address[18];
-    char device_name[256];
+    char device_name[128];
     char service_path[256];
     char char_path[256];
     bool connected;
     bool scanning;
+    DBusConnection* dbus_conn;
+    SensorPacket last_packet;
+    bool packet_ready;
 } BLEConnection;
 
 // Function declarations

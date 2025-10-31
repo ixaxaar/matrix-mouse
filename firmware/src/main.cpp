@@ -66,6 +66,8 @@ void setup() {
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
+  BLEDevice::setMTU(512);  // Request 512 byte MTU
+
   // Create BLE Service
   Serial.println("🔑 Creating BLE service...");
   BLEService *pService = pServer->createService(SERVICE_UUID);

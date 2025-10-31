@@ -81,14 +81,22 @@ err:
 void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     if (!device || !device->initialized || !packet) return;
 
+    // Convert int16 back to floats
+    float accel_x = packet->accel_x / 100.0f;
+    float accel_y = packet->accel_y / 100.0f;
+    float accel_z = packet->accel_z / 100.0f;
+    float gyro_x = packet->gyro_x / 10.0f;
+    float gyro_y = packet->gyro_y / 10.0f;
+    float gyro_z = packet->gyro_z / 10.0f;
+
     // Optional: handle button here later if you map packet->button_state
     // emit_event(device->fd, EV_KEY, BTN_LEFT, packet->button_state ? 1 : 0);
 
     int dx = 0, dy = 0;
 
     syslog(LOG_DEBUG, "Raw IMU data - Accel: %.2f,%.2f,%.2f Gyro: %.2f,%.2f,%.2f Button: %d",
-           packet->accel_x, packet->accel_y, packet->accel_z,
-           packet->gyro_x, packet->gyro_y, packet->gyro_z, packet->button_state);
+           accel_x, accel_y, accel_z,
+           gyro_x, gyro_y, gyro_z, packet->button_state);
 
     if (dx || dy) {
         emit_event(device->fd, EV_REL, REL_X, dx);

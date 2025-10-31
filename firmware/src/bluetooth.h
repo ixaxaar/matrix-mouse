@@ -11,13 +11,16 @@
 
 /**
  * @brief Structure to hold sensor data for BLE transmission.
+ * Limited to 20 bytes to fit in default BLE MTU (23 bytes - 3 bytes overhead = 20 bytes payload)
  */
 struct SensorPacket {
-    float accel_x, accel_y, accel_z; ///< X, Y, and Z-axis acceleration data.
-    float gyro_x, gyro_y, gyro_z;   ///< X, Y, and Z-axis gyroscope data.
-    uint8_t button_state;  // 0=none, 1=short_press, 2=long_press ///< State of the button (0=none, 1=short press, 2=long press).
-    uint32_t timestamp;             ///< Timestamp of the sensor reading.
+    int16_t accel_x, accel_y, accel_z; ///< Acceleration * 100 (e.g., 1.5g = 150)
+    int16_t gyro_x, gyro_y, gyro_z;    ///< Gyroscope * 10 (e.g., 5.5 deg/s = 55)
+    uint8_t button_state;               ///< 0=none, 1=press, 2=long_press
+    uint8_t padding;                    ///< Padding for alignment
+    uint16_t timestamp;                 ///< Millisecond counter (wraps every 65 seconds)
 } __attribute__((packed));
+// Size: 6*2 + 1 + 1 + 2 = 16 bytes (well under 20 byte limit)
 
 extern BLECharacteristic* pCharacteristic; ///< Pointer to the BLE characteristic used for sending data.
 extern bool deviceConnected;               ///< Flag to indicate if a BLE client is connected.

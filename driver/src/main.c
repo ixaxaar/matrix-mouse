@@ -158,8 +158,8 @@ int main(int argc, char* argv[]) {
 
                 if (verbose && !daemon_mode) {
                     printf("Accel: %.2f,%.2f,%.2f Gyro: %.2f,%.2f,%.2f Btn: %d\n",
-                           packet.accel_x, packet.accel_y, packet.accel_z,
-                           packet.gyro_x, packet.gyro_y, packet.gyro_z,
+                           packet.accel_x / 100.0f, packet.accel_y / 100.0f, packet.accel_z / 100.0f,
+                           packet.gyro_x / 10.0f, packet.gyro_y / 10.0f, packet.gyro_z / 10.0f,
                            packet.button_state);
                 }
             }

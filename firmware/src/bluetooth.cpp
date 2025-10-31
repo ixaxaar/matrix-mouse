@@ -16,12 +16,23 @@ void sendSensorData(uint8_t buttonState) {
 
     SensorPacket packet;
 
-    // Get sensor readings
-    getSensorData(&packet.accel_x, &packet.accel_y, &packet.accel_z,
-                  &packet.gyro_x, &packet.gyro_y, &packet.gyro_z);
+    // Get sensor readings as floats
+    float accel_x_f, accel_y_f, accel_z_f;
+    float gyro_x_f, gyro_y_f, gyro_z_f;
+    getSensorData(&accel_x_f, &accel_y_f, &accel_z_f,
+                  &gyro_x_f, &gyro_y_f, &gyro_z_f);
+
+    // Convert to scaled integers to fit in 20 bytes
+    packet.accel_x = (int16_t)(accel_x_f * 100.0f);
+    packet.accel_y = (int16_t)(accel_y_f * 100.0f);
+    packet.accel_z = (int16_t)(accel_z_f * 100.0f);
+    packet.gyro_x = (int16_t)(gyro_x_f * 10.0f);
+    packet.gyro_y = (int16_t)(gyro_y_f * 10.0f);
+    packet.gyro_z = (int16_t)(gyro_z_f * 10.0f);
 
     packet.button_state = buttonState;
-    packet.timestamp = millis();
+    packet.padding = 0;
+    packet.timestamp = (uint16_t)(millis() & 0xFFFF);
 
     // Send via BLE
     pCharacteristic->setValue((uint8_t*)&packet, sizeof(packet));
@@ -36,7 +47,7 @@ void sendSensorData(uint8_t buttonState) {
     static int packetCount = 0;
     if (buttonState == 0 && ++packetCount % 100 == 0) {
         Serial.printf("📊 Sensor data - Accel: %.2f,%.2f,%.2f | Gyro: %.2f,%.2f,%.2f \n",
-                     packet.accel_x, packet.accel_y, packet.accel_z,
-                     packet.gyro_x, packet.gyro_y, packet.gyro_z);
+                     packet.accel_x / 100.0f, packet.accel_y / 100.0f, packet.accel_z / 100.0f,
+                     packet.gyro_x / 10.0f, packet.gyro_y / 10.0f, packet.gyro_z / 10.0f);
     }
 }
