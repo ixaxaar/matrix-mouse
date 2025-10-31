@@ -4,6 +4,9 @@
 #include <linux/uinput.h>
 #include "common.h"
 
+#define VENDOR_ID  0x045E
+#define PRODUCT_ID 0x0823
+
 typedef struct {
     int fd;
     bool initialized;

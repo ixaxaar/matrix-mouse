@@ -12,7 +12,7 @@
 #include "common.h"
 #include <time.h>
 
-// Minimal event helpers
+// Emit a single input event
 static inline void emit_event(int fd, int type, int code, int value) {
     struct input_event ie = {0};
     ie.type = type;
@@ -24,16 +24,15 @@ static inline void emit_event(int fd, int type, int code, int value) {
     }
 }
 static inline void emit_sync(int fd) { emit_event(fd, EV_SYN, SYN_REPORT, 0); }
+static uint8_t last_button_state = 0;
 
-// Lightweight IMU filter state
+// IMU filter state
 typedef struct {
     double t_last;
     float roll, pitch, yaw;
     float gxf, gyf, gzf;
     int initialized;
 } ImuFilterState;
-
-static ImuFilterState imu = {0};
 
 static inline double now_s() {
     struct timespec ts;
@@ -50,9 +49,10 @@ int init_uinput_device(UInputDevice* device) {
         return -1;
     }
 
-    // Minimal mouse capabilities: relative X/Y + at least one button
+    // Minimal mouse capabilities: relative X/Y + right and left mouse buttons
     if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0) goto err;
     if (ioctl(fd, UI_SET_KEYBIT, BTN_LEFT) < 0) goto err;
+    if (ioctl(fd, UI_SET_KEYBIT, BTN_RIGHT) < 0) goto err;
 
     if (ioctl(fd, UI_SET_EVBIT, EV_REL) < 0) goto err;
     if (ioctl(fd, UI_SET_RELBIT, REL_X) < 0) goto err;
@@ -60,8 +60,8 @@ int init_uinput_device(UInputDevice* device) {
 
     struct uinput_setup us = {0};
     us.id.bustype = BUS_USB;     // Works well for desktops; BUS_BLUETOOTH also fine
-    us.id.vendor  = 0x045E;      // Arbitrary vendor/product (can change)
-    us.id.product = 0x0823;
+    us.id.vendor  = VENDOR_ID;
+    us.id.product = PRODUCT_ID;
     strncpy(us.name, "M5 Matrix IMU Mouse", sizeof(us.name) - 1);
 
     if (ioctl(fd, UI_DEV_SETUP, &us) < 0) goto err;
@@ -83,22 +83,77 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
 
     // Convert int16 back to floats
     float accel_x = packet->accel_x / 100.0f;
-    float accel_y = packet->accel_y / 100.0f;
     float accel_z = packet->accel_z / 100.0f;
-    float gyro_x = packet->gyro_x / 10.0f;
-    float gyro_y = packet->gyro_y / 10.0f;
-    float gyro_z = packet->gyro_z / 10.0f;
 
-    // Optional: handle button here later if you map packet->button_state
-    // emit_event(device->fd, EV_KEY, BTN_LEFT, packet->button_state ? 1 : 0);
+    // Handle button events
+    if (packet->button_state != last_button_state) {
+        // Reset last button state
+        if (last_button_state == 1)
+            emit_event(device->fd, EV_KEY, BTN_LEFT, 0);
+        else if (last_button_state == 2)
+            emit_event(device->fd, EV_KEY, BTN_RIGHT, 0);
+        emit_sync(device->fd);
 
+        if (packet->button_state == 1) {
+            // Button pressed - left click down
+            emit_event(device->fd, EV_KEY, BTN_LEFT, 1);
+            emit_sync(device->fd);
+            syslog(LOG_INFO, "Left button pressed");
+        } else if (packet->button_state == 2) {
+            // Right click down
+            emit_event(device->fd, EV_KEY, BTN_RIGHT, 1);
+            emit_sync(device->fd);
+            syslog(LOG_INFO, "Right button pressed");
+        } else if (packet->button_state == 0) {
+            // Button released
+            if (last_button_state == 1)
+                emit_event(device->fd, EV_KEY, BTN_LEFT, 0);
+            else if (last_button_state == 2)
+                emit_event(device->fd, EV_KEY, BTN_RIGHT, 0);
+            emit_sync(device->fd);
+            syslog(LOG_INFO, "Button released");
+        }
+
+        last_button_state = packet->button_state;
+    }
+
+    // Calculate tilt angles from accelerometer
+    // When device is flat: accel_y ≈ -1.0g (gravity), accel_x ≈ 0, accel_z ≈ 0
+    // Tilt left/right changes accel_x, tilt forward/back changes accel_z
+
+    // Remove the gravity component from Y axis
+    float tilt_x = accel_x;  // Left/Right tilt (positive = tilt right)
+    float tilt_z = accel_z;  // Forward/Back tilt (positive = tilt forward)
+
+    // Apply dead zone to reduce jitter
+    if (fabsf(tilt_x) < config.dead_zone) tilt_x = 0.0f;
+    if (fabsf(tilt_z) < config.dead_zone) tilt_z = 0.0f;
+
+    // Calculate mouse movement deltas
+    // Map tilt to cursor movement: tilt right = move right, tilt forward = move up
     int dx = 0, dy = 0;
 
-    syslog(LOG_INFO, "Raw IMU data - Accel: %.2f,%.2f,%.2f Gyro: %.2f,%.2f,%.2f Button: %d",
-           accel_x, accel_y, accel_z,
-           gyro_x, gyro_y, gyro_z, packet->button_state);
+    if (tilt_x != 0.0f || tilt_z != 0.0f) {
+        // Apply sensitivity and invert if configured
+        dx = (int)(tilt_x * config.movement_sensitivity * (config.invert_x ? -1 : 1));
+        dy = (int)(-tilt_z * config.movement_sensitivity * (config.invert_y ? -1 : 1));
 
-    if (dx || dy) {
+        // Clamp to reasonable values to prevent jumping
+        if (dx > 50) dx = 50;
+        if (dx < -50) dx = -50;
+        if (dy > 50) dy = 50;
+        if (dy < -50) dy = -50;
+    }
+
+    // Log periodically (every 50 packets ~1 second)
+    static int log_count = 0;
+    if (++log_count % 50 == 0) {
+        syslog(LOG_INFO, "Tilt X: %.2f Z: %.2f -> dx: %d dy: %d",
+               tilt_x, tilt_z, dx, dy);
+    }
+
+    // Send mouse movement if there's any delta
+    if (dx != 0 || dy != 0) {
         emit_event(device->fd, EV_REL, REL_X, dx);
         emit_event(device->fd, EV_REL, REL_Y, dy);
         emit_sync(device->fd);
