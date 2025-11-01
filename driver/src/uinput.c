@@ -123,7 +123,7 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
         .axis.y = packet->gyro_y / 10.0f,
         .axis.z = packet->gyro_z / 10.0f
     };
-    
+
     FusionVector accelerometer = {
         .axis.x = packet->accel_x / 100.0f,  // Convert back to g
         .axis.y = packet->accel_y / 100.0f,
@@ -138,7 +138,7 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     if (!fusion_state.initialized) {
         // Initialize Fusion AHRS
         FusionAhrsInitialise(&fusion_state.ahrs);
-        
+
         // Set AHRS settings for optimized mouse control
         FusionAhrsSettings settings = {
             .convention = FusionConventionNwu,        // North-West-Up coordinate system
@@ -149,7 +149,7 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
             .recoveryTriggerPeriod = 5 * 100         // 5 seconds at 100Hz
         };
         FusionAhrsSetSettings(&fusion_state.ahrs, &settings);
-        
+
         fusion_state.cursor_x = 0.0f;
         fusion_state.cursor_y = 0.0f;
         fusion_state.prev_quaternion = FUSION_IDENTITY_QUATERNION;
@@ -165,7 +165,7 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
 
     // Calculate angular velocity from quaternion difference
     // This gives us the rotation rate independent of device orientation
-    
+
     // Manually create conjugate of previous quaternion (negate x,y,z components)
     FusionQuaternion prev_conjugate = {
         .element.w = fusion_state.prev_quaternion.element.w,
@@ -173,15 +173,15 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
         .element.y = -fusion_state.prev_quaternion.element.y,
         .element.z = -fusion_state.prev_quaternion.element.z
     };
-    
+
     FusionQuaternion quaternion_diff = FusionQuaternionMultiply(quaternion, prev_conjugate);
-    
+
     // Extract angular velocity from quaternion difference
     // Small angle approximation: angular_velocity ≈ 2 * quaternion_vector / dt
     float angular_vel_x = 2.0f * quaternion_diff.element.x / dt;  // Roll rate
     float angular_vel_y = 2.0f * quaternion_diff.element.y / dt;  // Pitch rate
     float angular_vel_z = 2.0f * quaternion_diff.element.z / dt;  // Yaw rate
-    
+
     fusion_state.prev_quaternion = quaternion;
 
     // Debug: log sensor fusion values
@@ -201,7 +201,7 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
 
     // Map angular velocity to cursor movement (velocity-based control)
     // Yaw (Z) rotation → horizontal cursor movement
-    // Pitch (Y) rotation → vertical cursor movement  
+    // Pitch (Y) rotation → vertical cursor movement
     // Roll (X) is ignored for 2D mouse control
     float cursor_vel_x = angular_vel_z * config.movement_sensitivity;  // Yaw → X
     float cursor_vel_y = -angular_vel_y * config.movement_sensitivity; // Pitch → Y (inverted)
@@ -213,8 +213,8 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     // Debug velocity and accumulation
     if (debug_count % 10 == 0) {
         syslog(LOG_INFO, "VEL: (%.2f, %.2f) px/s | cursor_accum: (%.2f, %.2f) | sens:%.1f deadzone:%.3f deg/s",
-               cursor_vel_x, cursor_vel_y, 
-               fusion_state.cursor_x, fusion_state.cursor_y, 
+               cursor_vel_x, cursor_vel_y,
+               fusion_state.cursor_x, fusion_state.cursor_y,
                config.movement_sensitivity, dead_zone_deg_per_sec);
     }
 

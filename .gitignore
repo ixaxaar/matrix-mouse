@@ -70,3 +70,4 @@ docs/_build/
 # claude
 bin/
 driver/lib/node_modules/
+driver/bin
