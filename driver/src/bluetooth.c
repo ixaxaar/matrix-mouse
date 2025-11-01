@@ -10,9 +10,9 @@
 #include <math.h>
 
 #define BLUEZ_SERVICE "org.bluez"
-#define ADAPTER_PATH "/org/bluez/hci0"
 
 static DBusConnection* dbus_conn = NULL;
+static char adapter_path[64] = {0};
 
 // Simplified D-Bus method call with better error handling
 static int call_dbus_method(const char* path, const char* interface, const char* method) {
@@ -38,10 +38,92 @@ static int call_dbus_method(const char* path, const char* interface, const char*
     return result;
 }
 
+// Find first powered Bluetooth adapter
+static int find_bluetooth_adapter() {
+    DBusMessage* msg = dbus_message_new_method_call(
+        BLUEZ_SERVICE, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
+    if (!msg) return -1;
+
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, NULL);
+    dbus_message_unref(msg);
+    if (!reply) return -1;
+
+    DBusMessageIter iter, dict_iter, entry_iter, iface_dict_iter, iface_entry_iter;
+    dbus_message_iter_init(reply, &iter);
+    dbus_message_iter_recurse(&iter, &dict_iter);
+
+    bool found = false;
+    while (dbus_message_iter_get_arg_type(&dict_iter) == DBUS_TYPE_DICT_ENTRY && !found) {
+        dbus_message_iter_recurse(&dict_iter, &entry_iter);
+
+        char* path;
+        dbus_message_iter_get_basic(&entry_iter, &path);
+
+        // Check if this is an adapter path
+        if (strstr(path, "/org/bluez/hci")) {
+            dbus_message_iter_next(&entry_iter);
+            dbus_message_iter_recurse(&entry_iter, &iface_dict_iter);
+
+            while (dbus_message_iter_get_arg_type(&iface_dict_iter) == DBUS_TYPE_DICT_ENTRY) {
+                dbus_message_iter_recurse(&iface_dict_iter, &iface_entry_iter);
+
+                char* interface;
+                dbus_message_iter_get_basic(&iface_entry_iter, &interface);
+
+                if (strcmp(interface, "org.bluez.Adapter1") == 0) {
+                    // Check if adapter is powered
+                    DBusMessage* prop_msg = dbus_message_new_method_call(
+                        BLUEZ_SERVICE, path, "org.freedesktop.DBus.Properties", "Get");
+                    if (prop_msg) {
+                        const char* iface_name = "org.bluez.Adapter1";
+                        const char* prop_name = "Powered";
+
+                        DBusMessageIter prop_iter;
+                        dbus_message_iter_init_append(prop_msg, &prop_iter);
+                        dbus_message_iter_append_basic(&prop_iter, DBUS_TYPE_STRING, &iface_name);
+                        dbus_message_iter_append_basic(&prop_iter, DBUS_TYPE_STRING, &prop_name);
+
+                        DBusMessage* prop_reply = dbus_connection_send_with_reply_and_block(
+                            dbus_conn, prop_msg, 5000, NULL);
+                        dbus_message_unref(prop_msg);
+
+                        if (prop_reply) {
+                            DBusMessageIter reply_iter, variant_iter;
+                            dbus_message_iter_init(prop_reply, &reply_iter);
+                            dbus_message_iter_recurse(&reply_iter, &variant_iter);
+
+                            if (dbus_message_iter_get_arg_type(&variant_iter) == DBUS_TYPE_BOOLEAN) {
+                                dbus_bool_t powered;
+                                dbus_message_iter_get_basic(&variant_iter, &powered);
+
+                                if (powered) {
+                                    strncpy(adapter_path, path, sizeof(adapter_path) - 1);
+                                    found = true;
+                                    syslog(LOG_INFO, "Found powered Bluetooth adapter: %s", path);
+                                }
+                            }
+                            dbus_message_unref(prop_reply);
+                        }
+                    }
+                }
+
+                if (found) break;
+                dbus_message_iter_next(&iface_dict_iter);
+            }
+        }
+
+        if (found) break;
+        dbus_message_iter_next(&dict_iter);
+    }
+
+    dbus_message_unref(reply);
+    return found ? 0 : -1;
+}
+
 // Simplified property setter
 static int set_adapter_powered(bool powered) {
     DBusMessage* msg = dbus_message_new_method_call(
-        BLUEZ_SERVICE, ADAPTER_PATH, "org.freedesktop.DBus.Properties", "Set");
+        BLUEZ_SERVICE, adapter_path, "org.freedesktop.DBus.Properties", "Set");
     if (!msg) return -1;
 
     const char* interface = "org.bluez.Adapter1";
@@ -68,11 +150,19 @@ static int set_adapter_powered(bool powered) {
 static bool find_m5_device(BLEConnection* conn) {
     DBusMessage* msg = dbus_message_new_method_call(
         BLUEZ_SERVICE, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects");
-    if (!msg) return false;
+    if (!msg) {
+        syslog(LOG_ERR, "Failed to create GetManagedObjects message");
+        return false;
+    }
 
     DBusMessage* reply = dbus_connection_send_with_reply_and_block(dbus_conn, msg, 10000, NULL);
     dbus_message_unref(msg);
-    if (!reply) return false;
+    if (!reply) {
+        syslog(LOG_ERR, "Failed to get managed objects from BlueZ");
+        return false;
+    }
+
+    syslog(LOG_INFO, "Got BlueZ managed objects, scanning for devices...");
 
     DBusMessageIter iter, dict_iter, entry_iter;
     dbus_message_iter_init(reply, &iter);
@@ -85,8 +175,8 @@ static bool find_m5_device(BLEConnection* conn) {
         char* path;
         dbus_message_iter_get_basic(&entry_iter, &path);
 
-        // Only check device paths
-        if (strstr(path, "/org/bluez/hci0/dev_")) {
+        // Only check device paths for our adapter
+        if (strstr(path, adapter_path) && strstr(path, "/dev_")) {
             // Get device name property
             DBusMessage* prop_msg = dbus_message_new_method_call(
                 BLUEZ_SERVICE, path, "org.freedesktop.DBus.Properties", "Get");
@@ -112,6 +202,7 @@ static bool find_m5_device(BLEConnection* conn) {
                         char* name;
                         dbus_message_iter_get_basic(&variant_iter, &name);
 
+                        syslog(LOG_INFO, "Found device: %s at path %s", name ? name : "NULL", path);
                         if (name && (strstr(name, "M5") || strstr(name, "Mouse"))) {
                             strncpy(conn->device_path, path, sizeof(conn->device_path) - 1);
                             strncpy(conn->device_name, name, sizeof(conn->device_name) - 1);
@@ -144,6 +235,12 @@ int init_bluetooth() {
         return -1;
     }
 
+    // Find a powered Bluetooth adapter
+    if (find_bluetooth_adapter() != 0) {
+        syslog(LOG_ERR, "No powered Bluetooth adapter found");
+        return -1;
+    }
+
     if (set_adapter_powered(true) != 0) {
         syslog(LOG_WARNING, "Failed to power on adapter, continuing anyway");
     }
@@ -157,19 +254,20 @@ int scan_for_device(BLEConnection* conn) {
     syslog(LOG_INFO, "Scanning for M5 device...");
 
     // Start discovery
-    if (call_dbus_method(ADAPTER_PATH, "org.bluez.Adapter1", "StartDiscovery") != 0) {
+    if (call_dbus_method(adapter_path, "org.bluez.Adapter1", "StartDiscovery") != 0) {
         syslog(LOG_ERR, "Failed to start discovery");
         return -1;
     }
 
     conn->scanning = true;
-    sleep(5);  // Scan duration
+    syslog(LOG_INFO, "Discovery started, scanning for 10 seconds...");
+    sleep(10);  // Increased scan duration
 
     // Find device
     bool found = find_m5_device(conn);
 
     // Stop discovery
-    call_dbus_method(ADAPTER_PATH, "org.bluez.Adapter1", "StopDiscovery");
+    call_dbus_method(adapter_path, "org.bluez.Adapter1", "StopDiscovery");
     conn->scanning = false;
 
     return found ? 0 : -1;
@@ -446,7 +544,7 @@ void disconnect_device(BLEConnection* conn) {
 
 void cleanup_bluetooth() {
     if (dbus_conn) {
-        call_dbus_method(ADAPTER_PATH, "org.bluez.Adapter1", "StopDiscovery");
+        call_dbus_method(adapter_path, "org.bluez.Adapter1", "StopDiscovery");
         dbus_connection_unref(dbus_conn);
         dbus_conn = NULL;
     }
