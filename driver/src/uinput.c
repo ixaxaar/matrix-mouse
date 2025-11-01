@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include "common.h"
 #include <time.h>
+#include "Fusion.h"
 
 // Emit a single input event
 static inline void emit_event(int fd, int type, int code, int value) {
@@ -26,15 +27,16 @@ static inline void emit_event(int fd, int type, int code, int value) {
 static inline void emit_sync(int fd) { emit_event(fd, EV_SYN, SYN_REPORT, 0); }
 static uint8_t last_button_state = 0;
 
-// IMU state for position tracking
+// IMU state with Fusion AHRS
 typedef struct {
+    FusionAhrs ahrs;              // Fusion AHRS algorithm
+    FusionQuaternion prev_quaternion;  // Previous quaternion for angular velocity
     double t_last;
     float cursor_x, cursor_y;     // Virtual cursor position (accumulated)
-    float accel_x_smooth, accel_y_smooth;  // Low-pass filtered accelerometer
     int initialized;
-} ImuFilterState;
+} FusionFilterState;
 
-static ImuFilterState imu_state = {0};
+static FusionFilterState fusion_state = {0};
 
 static inline double now_s() {
     struct timespec ts;
@@ -83,7 +85,7 @@ err:
 void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     if (!device || !device->initialized || !packet) return;
 
-    // Handle button events
+    // Handle button events (unchanged)
     if (packet->button_state != last_button_state) {
         // Reset last button state
         if (last_button_state == 1)
@@ -115,68 +117,114 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
         last_button_state = packet->button_state;
     }
 
-    // Convert int16 back to floats
-    float accel_x = packet->accel_x / 100.0f;  // g
-    float accel_y = packet->accel_y / 100.0f;  // g
-    // accel_z ignored for now (could be used for scroll or 3D tracking later)
+    // Convert int16 sensor data to float
+    FusionVector gyroscope = {
+        .axis.x = packet->gyro_x / 10.0f,  // Convert back to degrees/s
+        .axis.y = packet->gyro_y / 10.0f,
+        .axis.z = packet->gyro_z / 10.0f
+    };
+    
+    FusionVector accelerometer = {
+        .axis.x = packet->accel_x / 100.0f,  // Convert back to g
+        .axis.y = packet->accel_y / 100.0f,
+        .axis.z = packet->accel_z / 100.0f
+    };
 
     // Get time delta
     double t_now = now_s();
-    float dt = imu_state.initialized ? (float)(t_now - imu_state.t_last) : 0.02f;
-    imu_state.t_last = t_now;
+    float dt = fusion_state.initialized ? (float)(t_now - fusion_state.t_last) : 0.02f;
+    fusion_state.t_last = t_now;
 
-    if (!imu_state.initialized) {
-        // Initialize state
-        imu_state.cursor_x = 0.0f;
-        imu_state.cursor_y = 0.0f;
-        imu_state.accel_x_smooth = accel_x;
-        imu_state.accel_y_smooth = accel_y;
-        imu_state.initialized = 1;
+    if (!fusion_state.initialized) {
+        // Initialize Fusion AHRS
+        FusionAhrsInitialise(&fusion_state.ahrs);
+        
+        // Set AHRS settings for optimized mouse control
+        FusionAhrsSettings settings = {
+            .convention = FusionConventionNwu,        // North-West-Up coordinate system
+            .gain = 0.5f,                            // Moderate gain for stability
+            .gyroscopeRange = 2000.0f,               // ±2000 degrees/s range
+            .accelerationRejection = 90.0f,          // Reject high accelerations
+            .magneticRejection = 0.0f,               // No magnetometer
+            .recoveryTriggerPeriod = 5 * 100         // 5 seconds at 100Hz
+        };
+        FusionAhrsSetSettings(&fusion_state.ahrs, &settings);
+        
+        fusion_state.cursor_x = 0.0f;
+        fusion_state.cursor_y = 0.0f;
+        fusion_state.prev_quaternion = FUSION_IDENTITY_QUATERNION;
+        fusion_state.initialized = 1;
         return;  // Skip first frame
     }
 
-    // Low-pass filter to smooth accelerometer readings
-    const float ACCEL_SMOOTH = 0.8f;  // 0.8 = keep 80% of old value, add 20% new
-    imu_state.accel_x_smooth = ACCEL_SMOOTH * imu_state.accel_x_smooth + (1.0f - ACCEL_SMOOTH) * accel_x;
-    imu_state.accel_y_smooth = ACCEL_SMOOTH * imu_state.accel_y_smooth + (1.0f - ACCEL_SMOOTH) * accel_y;
+    // Update AHRS with sensor data (no magnetometer)
+    FusionAhrsUpdateNoMagnetometer(&fusion_state.ahrs, gyroscope, accelerometer, dt);
 
-    // Use smoothed accelerometer as direct input (tilt-based control)
-    // When device tilts right, accel_x increases (gravity component shifts)
-    // This is more stable than trying to track translation
-    float tilt_x = imu_state.accel_x_smooth;
-    float tilt_y = imu_state.accel_y_smooth;
+    // Get current quaternion
+    FusionQuaternion quaternion = FusionAhrsGetQuaternion(&fusion_state.ahrs);
 
-    // Debug: log raw values
+    // Calculate angular velocity from quaternion difference
+    // This gives us the rotation rate independent of device orientation
+    
+    // Manually create conjugate of previous quaternion (negate x,y,z components)
+    FusionQuaternion prev_conjugate = {
+        .element.w = fusion_state.prev_quaternion.element.w,
+        .element.x = -fusion_state.prev_quaternion.element.x,
+        .element.y = -fusion_state.prev_quaternion.element.y,
+        .element.z = -fusion_state.prev_quaternion.element.z
+    };
+    
+    FusionQuaternion quaternion_diff = FusionQuaternionMultiply(quaternion, prev_conjugate);
+    
+    // Extract angular velocity from quaternion difference
+    // Small angle approximation: angular_velocity ≈ 2 * quaternion_vector / dt
+    float angular_vel_x = 2.0f * quaternion_diff.element.x / dt;  // Roll rate
+    float angular_vel_y = 2.0f * quaternion_diff.element.y / dt;  // Pitch rate
+    float angular_vel_z = 2.0f * quaternion_diff.element.z / dt;  // Yaw rate
+    
+    fusion_state.prev_quaternion = quaternion;
+
+    // Debug: log sensor fusion values
     static int debug_count = 0;
     if (++debug_count % 10 == 0) {  // Every 10 frames (~200ms)
-        syslog(LOG_INFO, "RAW: accel(%.3f, %.3f) smooth(%.3f, %.3f) deadzone:%.3f",
-               accel_x, accel_y, tilt_x, tilt_y, config.dead_zone);
+        FusionEuler euler = FusionQuaternionToEuler(quaternion);
+        syslog(LOG_INFO, "FUSION: Roll:%.1f° Pitch:%.1f° Yaw:%.1f° | AngVel(%.2f, %.2f, %.2f) dt:%.4f",
+               euler.angle.roll, euler.angle.pitch, euler.angle.yaw,
+               angular_vel_x, angular_vel_y, angular_vel_z, dt);
     }
 
-    // Apply dead zone to filter small tilts
-    if (fabsf(tilt_x) < config.dead_zone) tilt_x = 0.0f;
-    if (fabsf(tilt_y) < config.dead_zone) tilt_y = 0.0f;
+    // Apply dead zone FIRST to filter noise/drift (in degrees/second)
+    float dead_zone_deg_per_sec = config.dead_zone;  // e.g., 0.1 deg/s
+    if (fabsf(angular_vel_x) < dead_zone_deg_per_sec) angular_vel_x = 0.0f;
+    if (fabsf(angular_vel_y) < dead_zone_deg_per_sec) angular_vel_y = 0.0f;
+    if (fabsf(angular_vel_z) < dead_zone_deg_per_sec) angular_vel_z = 0.0f;
 
-    // Map tilt directly to cursor velocity (simpler and more stable)
-    // Tilt right (+X) → cursor moves right
-    // Tilt forward (+Y) → cursor moves up
-    float scale = config.movement_sensitivity * 50.0f;  // Much lower scale
-    imu_state.cursor_x += tilt_x * scale * dt;
-    imu_state.cursor_y += tilt_y * scale * dt;
+    // Map angular velocity to cursor movement (velocity-based control)
+    // Yaw (Z) rotation → horizontal cursor movement
+    // Pitch (Y) rotation → vertical cursor movement  
+    // Roll (X) is ignored for 2D mouse control
+    float cursor_vel_x = angular_vel_z * config.movement_sensitivity;  // Yaw → X
+    float cursor_vel_y = -angular_vel_y * config.movement_sensitivity; // Pitch → Y (inverted)
 
-    // Debug cursor accumulation
+    // Integrate velocity to position
+    fusion_state.cursor_x += cursor_vel_x * dt;
+    fusion_state.cursor_y += cursor_vel_y * dt;
+
+    // Debug velocity and accumulation
     if (debug_count % 10 == 0) {
-        syslog(LOG_INFO, "TILT: (%.3f, %.3f) cursor_accum: (%.2f, %.2f) scale:%.1f dt:%.4f",
-               tilt_x, tilt_y, imu_state.cursor_x, imu_state.cursor_y, scale, dt);
+        syslog(LOG_INFO, "VEL: (%.2f, %.2f) px/s | cursor_accum: (%.2f, %.2f) | sens:%.1f deadzone:%.3f deg/s",
+               cursor_vel_x, cursor_vel_y, 
+               fusion_state.cursor_x, fusion_state.cursor_y, 
+               config.movement_sensitivity, dead_zone_deg_per_sec);
     }
 
     // Extract integer deltas for mouse movement
-    int dx = (int)(imu_state.cursor_x);
-    int dy = (int)(imu_state.cursor_y);
+    int dx = (int)(fusion_state.cursor_x);
+    int dy = (int)(fusion_state.cursor_y);
 
     // Subtract integer part from accumulated position (keep fractional part for smoothness)
-    imu_state.cursor_x -= (float)dx;
-    imu_state.cursor_y -= (float)dy;
+    fusion_state.cursor_x -= (float)dx;
+    fusion_state.cursor_y -= (float)dy;
 
     // Apply invert settings
     if (config.invert_x) dx = -dx;
@@ -191,9 +239,9 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     // Log periodically (every 50 packets ~1 second)
     static int log_count = 0;
     if (++log_count % 50 == 0) {
-        syslog(LOG_INFO, "Tilt: (%.2f, %.2f) | Cursor: (%.2f, %.2f) -> dx:%d dy:%d",
-               tilt_x, tilt_y,
-               imu_state.cursor_x, imu_state.cursor_y,
+        syslog(LOG_INFO, "FUSION Angular Vel: (%.2f, %.2f) | Cursor: (%.2f, %.2f) -> dx:%d dy:%d",
+               cursor_vel_x, cursor_vel_y,
+               fusion_state.cursor_x, fusion_state.cursor_y,
                dx, dy);
     }
 

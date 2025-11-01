@@ -1,12 +1,14 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g
-INCLUDES = -Iinclude $(shell pkg-config --cflags dbus-1)
+INCLUDES = -Iinclude -Ilib/Fusion $(shell pkg-config --cflags dbus-1)
 LIBS = -lbluetooth -lpthread -lm -lyaml -ldbus-1
 
 SRCDIR = src
 OBJDIR = obj
-SOURCES = $(wildcard $(SRCDIR)/*.c)
+FUSIONDIR = lib/Fusion
+SOURCES = $(wildcard $(SRCDIR)/*.c) $(wildcard $(FUSIONDIR)/*.c)
 OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+OBJECTS := $(OBJECTS:$(FUSIONDIR)/%.c=$(OBJDIR)/%.o)
 TARGET = m5-mouse-daemon
 
 .PHONY: all clean install
@@ -17,6 +19,9 @@ $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ $(LIBS)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(OBJDIR)/%.o: $(FUSIONDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 $(OBJDIR):

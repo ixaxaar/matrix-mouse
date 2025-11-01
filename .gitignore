@@ -66,3 +66,7 @@ coverage/
 
 # Documentation build
 docs/_build/
+
+# claude
+bin/
+driver/lib/node_modules/
