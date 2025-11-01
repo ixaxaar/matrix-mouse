@@ -30,7 +30,6 @@ static uint8_t last_button_state = 0;
 // IMU state with Fusion AHRS
 typedef struct {
     FusionAhrs ahrs;              // Fusion AHRS algorithm
-    FusionQuaternion prev_quaternion;  // Previous quaternion for angular velocity
     double t_last;
     float cursor_x, cursor_y;     // Virtual cursor position (accumulated)
     int initialized;
@@ -139,20 +138,19 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
         // Initialize Fusion AHRS
         FusionAhrsInitialise(&fusion_state.ahrs);
 
-        // Set AHRS settings for optimized mouse control
+        // Set AHRS settings optimized for fast, accurate mouse control
         FusionAhrsSettings settings = {
             .convention = FusionConventionNwu,        // North-West-Up coordinate system
-            .gain = 0.5f,                            // Moderate gain for stability
+            .gain = 1.0f,                            // Higher gain for faster convergence
             .gyroscopeRange = 2000.0f,               // ±2000 degrees/s range
-            .accelerationRejection = 90.0f,          // Reject high accelerations
+            .accelerationRejection = 10.0f,          // Lower rejection for mouse movements
             .magneticRejection = 0.0f,               // No magnetometer
-            .recoveryTriggerPeriod = 5 * 100         // 5 seconds at 100Hz
+            .recoveryTriggerPeriod = 2 * 200         // 2 seconds at 200Hz (faster recovery)
         };
         FusionAhrsSetSettings(&fusion_state.ahrs, &settings);
 
         fusion_state.cursor_x = 0.0f;
         fusion_state.cursor_y = 0.0f;
-        fusion_state.prev_quaternion = FUSION_IDENTITY_QUATERNION;
         fusion_state.initialized = 1;
         return;  // Skip first frame
     }
@@ -163,48 +161,34 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     // Get current quaternion
     FusionQuaternion quaternion = FusionAhrsGetQuaternion(&fusion_state.ahrs);
 
-    // Calculate angular velocity from quaternion difference
-    // This gives us the rotation rate independent of device orientation
+    // Get linear acceleration (with gravity removed by Fusion)
+    FusionVector linear_acceleration = FusionAhrsGetLinearAcceleration(&fusion_state.ahrs);
 
-    // Manually create conjugate of previous quaternion (negate x,y,z components)
-    FusionQuaternion prev_conjugate = {
-        .element.w = fusion_state.prev_quaternion.element.w,
-        .element.x = -fusion_state.prev_quaternion.element.x,
-        .element.y = -fusion_state.prev_quaternion.element.y,
-        .element.z = -fusion_state.prev_quaternion.element.z
-    };
-
-    FusionQuaternion quaternion_diff = FusionQuaternionMultiply(quaternion, prev_conjugate);
-
-    // Extract angular velocity from quaternion difference
-    // Small angle approximation: angular_velocity ≈ 2 * quaternion_vector / dt
-    float angular_vel_x = 2.0f * quaternion_diff.element.x / dt;  // Roll rate
-    float angular_vel_y = 2.0f * quaternion_diff.element.y / dt;  // Pitch rate
-    float angular_vel_z = 2.0f * quaternion_diff.element.z / dt;  // Yaw rate
-
-    fusion_state.prev_quaternion = quaternion;
+    // Transform linear acceleration from device frame to world frame using current orientation
+    // This makes movement independent of device rotation - move device left = cursor left
+    FusionMatrix rotation_matrix = FusionQuaternionToMatrix(quaternion);
+    FusionVector world_acceleration = FusionMatrixMultiplyVector(rotation_matrix, linear_acceleration);
 
     // Debug: log sensor fusion values
     static int debug_count = 0;
     if (++debug_count % 10 == 0) {  // Every 10 frames (~200ms)
         FusionEuler euler = FusionQuaternionToEuler(quaternion);
-        syslog(LOG_INFO, "FUSION: Roll:%.1f° Pitch:%.1f° Yaw:%.1f° | AngVel(%.2f, %.2f, %.2f) dt:%.4f",
+        syslog(LOG_INFO, "FUSION: Roll:%.1f° Pitch:%.1f° Yaw:%.1f° | WorldAccel(%.3f, %.3f, %.3f) dt:%.4f",
                euler.angle.roll, euler.angle.pitch, euler.angle.yaw,
-               angular_vel_x, angular_vel_y, angular_vel_z, dt);
+               world_acceleration.axis.x, world_acceleration.axis.y, world_acceleration.axis.z, dt);
     }
 
-    // Apply dead zone FIRST to filter noise/drift (in degrees/second)
-    float dead_zone_deg_per_sec = config.dead_zone;  // e.g., 0.1 deg/s
-    if (fabsf(angular_vel_x) < dead_zone_deg_per_sec) angular_vel_x = 0.0f;
-    if (fabsf(angular_vel_y) < dead_zone_deg_per_sec) angular_vel_y = 0.0f;
-    if (fabsf(angular_vel_z) < dead_zone_deg_per_sec) angular_vel_z = 0.0f;
+    // Apply dead zone to filter small movements (in g units)
+    float dead_zone_g = config.dead_zone;  // e.g., 0.03 g
+    if (fabsf(world_acceleration.axis.x) < dead_zone_g) world_acceleration.axis.x = 0.0f;
+    if (fabsf(world_acceleration.axis.y) < dead_zone_g) world_acceleration.axis.y = 0.0f;
 
-    // Map angular velocity to cursor movement (velocity-based control)
-    // Yaw (Z) rotation → horizontal cursor movement
-    // Pitch (Y) rotation → vertical cursor movement
-    // Roll (X) is ignored for 2D mouse control
-    float cursor_vel_x = -angular_vel_z * config.movement_sensitivity; // Yaw → X (negated to fix inversion)
-    float cursor_vel_y = -angular_vel_y * config.movement_sensitivity; // Pitch → Y (inverted)
+    // Map world-space acceleration to cursor velocity
+    // World X acceleration → horizontal cursor movement
+    // World Y acceleration → vertical cursor movement
+    // Z acceleration ignored (vertical in world frame)
+    float cursor_vel_x = world_acceleration.axis.x * config.movement_sensitivity;  // World X → Screen X
+    float cursor_vel_y = -world_acceleration.axis.y * config.movement_sensitivity; // World Y → Screen Y (inverted)
 
     // Integrate velocity to position
     fusion_state.cursor_x += cursor_vel_x * dt;
@@ -212,10 +196,10 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
 
     // Debug velocity and accumulation
     if (debug_count % 10 == 0) {
-        syslog(LOG_INFO, "VEL: (%.2f, %.2f) px/s | cursor_accum: (%.2f, %.2f) | sens:%.1f deadzone:%.3f deg/s",
+        syslog(LOG_INFO, "VEL: (%.2f, %.2f) px/s | cursor_accum: (%.2f, %.2f) | sens:%.1f deadzone:%.3f g",
                cursor_vel_x, cursor_vel_y,
                fusion_state.cursor_x, fusion_state.cursor_y,
-               config.movement_sensitivity, dead_zone_deg_per_sec);
+               config.movement_sensitivity, dead_zone_g);
     }
 
     // Extract integer deltas for mouse movement

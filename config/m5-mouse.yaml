@@ -1,10 +1,12 @@
 # M5 Atom Matrix Mouse Controller Configuration
 
-# Movement sensitivity (multiplier for accelerometer values)
-movement_sensitivity: 1000.0
+# Movement sensitivity (pixels per g of acceleration)  
+# Recommended range: 100-1000 (higher = more sensitive)
+movement_sensitivity: 500.0
 
-# Dead zone threshold (ignore small movements below this value)
-dead_zone: 0.1
+# Dead zone threshold (g units - ignore acceleration below this)
+# Recommended range: 0.01-0.1 (lower = more precise, higher = more stable)
+dead_zone: 0.03
 
 # Invert axis directions
 invert_x: false
