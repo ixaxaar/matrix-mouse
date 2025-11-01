@@ -203,7 +203,7 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     // Yaw (Z) rotation → horizontal cursor movement
     // Pitch (Y) rotation → vertical cursor movement
     // Roll (X) is ignored for 2D mouse control
-    float cursor_vel_x = angular_vel_z * config.movement_sensitivity;  // Yaw → X
+    float cursor_vel_x = -angular_vel_z * config.movement_sensitivity; // Yaw → X (negated to fix inversion)
     float cursor_vel_y = -angular_vel_y * config.movement_sensitivity; // Pitch → Y (inverted)
 
     // Integrate velocity to position
