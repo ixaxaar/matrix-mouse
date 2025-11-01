@@ -152,5 +152,5 @@ void loop() {
     oldDeviceConnected = deviceConnected;
   }
 
-  delay(20); // 50Hz update rate
+  delay(5); // 200Hz update rate for improved responsiveness
 }
