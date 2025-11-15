@@ -32,6 +32,7 @@ typedef struct {
     FusionAhrs ahrs;              // Fusion AHRS algorithm
     double t_last;
     float cursor_x, cursor_y;     // Virtual cursor position (accumulated)
+    float smoothed_vel_x, smoothed_vel_y;  // Smoothed cursor velocity
     int initialized;
 } FusionFilterState;
 
@@ -138,14 +139,14 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
         // Initialize Fusion AHRS
         FusionAhrsInitialise(&fusion_state.ahrs);
 
-        // Set AHRS settings optimized for fast, accurate mouse control
+        // Set AHRS settings optimized for tilt-based mouse control
         FusionAhrsSettings settings = {
             .convention = FusionConventionNwu,        // North-West-Up coordinate system
-            .gain = 1.0f,                            // Higher gain for faster convergence
+            .gain = 0.5f,                            // Moderate gain (balance speed vs stability)
             .gyroscopeRange = 2000.0f,               // ±2000 degrees/s range
-            .accelerationRejection = 10.0f,          // Lower rejection for mouse movements
+            .accelerationRejection = 20.0f,          // Moderate rejection (filter fast movements)
             .magneticRejection = 0.0f,               // No magnetometer
-            .recoveryTriggerPeriod = 2 * 200         // 2 seconds at 200Hz (faster recovery)
+            .recoveryTriggerPeriod = 5 * 50          // 5 seconds at 50Hz (don't recover too fast)
         };
         FusionAhrsSetSettings(&fusion_state.ahrs, &settings);
 
@@ -158,48 +159,43 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     // Update AHRS with sensor data (no magnetometer)
     FusionAhrsUpdateNoMagnetometer(&fusion_state.ahrs, gyroscope, accelerometer, dt);
 
-    // Get current quaternion
+    // Get current orientation as Euler angles (roll, pitch, yaw)
     FusionQuaternion quaternion = FusionAhrsGetQuaternion(&fusion_state.ahrs);
+    FusionEuler euler = FusionQuaternionToEuler(quaternion);
 
-    // Get linear acceleration (with gravity removed by Fusion)
-    FusionVector linear_acceleration = FusionAhrsGetLinearAcceleration(&fusion_state.ahrs);
+    // Use orientation angles directly for cursor control
+    // Roll (tilting left/right) → X movement
+    // Pitch (tilting forward/back) → Y movement
+    // Yaw ignored (no magnetometer, drifts anyway)
+    float roll = euler.angle.roll;    // degrees
+    float pitch = euler.angle.pitch;  // degrees
 
-    // Transform linear acceleration from device frame to world frame using current orientation
-    // This makes movement independent of device rotation - move device left = cursor left
-    FusionMatrix rotation_matrix = FusionQuaternionToMatrix(quaternion);
-    FusionVector world_acceleration = FusionMatrixMultiplyVector(rotation_matrix, linear_acceleration);
+    // Apply dead zone to angles (filter small unintentional tilts)
+    float dead_zone_deg = config.dead_zone;  // e.g., 3.0 degrees
+    if (fabsf(roll) < dead_zone_deg) roll = 0.0f;
+    if (fabsf(pitch) < dead_zone_deg) pitch = 0.0f;
 
-    // Debug: log sensor fusion values
+    // Map tilt angles to cursor velocity (degrees → pixels/second)
+    // Larger tilt = faster cursor movement
+    float raw_vel_x = roll * config.movement_sensitivity;    // Roll → horizontal velocity
+    float raw_vel_y = pitch * config.movement_sensitivity;   // Pitch → vertical velocity
+
+    // Apply exponential smoothing to reduce jitter (alpha = 0.3 = 30% new, 70% old)
+    // Lower alpha = smoother but more lag, higher alpha = more responsive but jittery
+    float alpha = 0.3f;
+    fusion_state.smoothed_vel_x = alpha * raw_vel_x + (1.0f - alpha) * fusion_state.smoothed_vel_x;
+    fusion_state.smoothed_vel_y = alpha * raw_vel_y + (1.0f - alpha) * fusion_state.smoothed_vel_y;
+
+    // Integrate smoothed velocity to cursor position
+    fusion_state.cursor_x += fusion_state.smoothed_vel_x * dt;
+    fusion_state.cursor_y += fusion_state.smoothed_vel_y * dt;
+
+    // Debug: log orientation and velocity
     static int debug_count = 0;
-    if (++debug_count % 10 == 0) {  // Every 10 frames (~200ms)
-        FusionEuler euler = FusionQuaternionToEuler(quaternion);
-        syslog(LOG_INFO, "FUSION: Roll:%.1f° Pitch:%.1f° Yaw:%.1f° | WorldAccel(%.3f, %.3f, %.3f) dt:%.4f",
+    if (++debug_count % 10 == 0) {  // Every 10 frames (~200ms at 50Hz)
+        syslog(LOG_INFO, "Angles: Roll:%.1f° Pitch:%.1f° Yaw:%.1f° | Vel(%.1f, %.1f) px/s | dt:%.4f",
                euler.angle.roll, euler.angle.pitch, euler.angle.yaw,
-               world_acceleration.axis.x, world_acceleration.axis.y, world_acceleration.axis.z, dt);
-    }
-
-    // Apply dead zone to filter small movements (in g units)
-    float dead_zone_g = config.dead_zone;  // e.g., 0.03 g
-    if (fabsf(world_acceleration.axis.x) < dead_zone_g) world_acceleration.axis.x = 0.0f;
-    if (fabsf(world_acceleration.axis.y) < dead_zone_g) world_acceleration.axis.y = 0.0f;
-
-    // Map world-space acceleration to cursor velocity
-    // World X acceleration → horizontal cursor movement
-    // World Y acceleration → vertical cursor movement
-    // Z acceleration ignored (vertical in world frame)
-    float cursor_vel_x = world_acceleration.axis.x * config.movement_sensitivity;  // World X → Screen X
-    float cursor_vel_y = -world_acceleration.axis.y * config.movement_sensitivity; // World Y → Screen Y (inverted)
-
-    // Integrate velocity to position
-    fusion_state.cursor_x += cursor_vel_x * dt;
-    fusion_state.cursor_y += cursor_vel_y * dt;
-
-    // Debug velocity and accumulation
-    if (debug_count % 10 == 0) {
-        syslog(LOG_INFO, "VEL: (%.2f, %.2f) px/s | cursor_accum: (%.2f, %.2f) | sens:%.1f deadzone:%.3f g",
-               cursor_vel_x, cursor_vel_y,
-               fusion_state.cursor_x, fusion_state.cursor_y,
-               config.movement_sensitivity, dead_zone_g);
+               fusion_state.smoothed_vel_x, fusion_state.smoothed_vel_y, dt);
     }
 
     // Extract integer deltas for mouse movement
@@ -223,8 +219,8 @@ void process_sensor_data(UInputDevice* device, const SensorPacket* packet) {
     // Log periodically (every 50 packets ~1 second)
     static int log_count = 0;
     if (++log_count % 50 == 0) {
-        syslog(LOG_INFO, "FUSION Angular Vel: (%.2f, %.2f) | Cursor: (%.2f, %.2f) -> dx:%d dy:%d",
-               cursor_vel_x, cursor_vel_y,
+        syslog(LOG_INFO, "Movement: Vel(%.1f, %.1f) px/s | Accum(%.2f, %.2f) | Delta dx:%d dy:%d",
+               fusion_state.smoothed_vel_x, fusion_state.smoothed_vel_y,
                fusion_state.cursor_x, fusion_state.cursor_y,
                dx, dy);
     }
