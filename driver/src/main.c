@@ -12,9 +12,9 @@
 #include "uinput.h"
 
 MouseConfig config = {
-    .movement_sensitivity = 2.0f,       // Default: pixels per degree/second
+    .movement_sensitivity = 8.0f,       // Pixels per degree of tilt (higher = faster cursor)
     .scroll_sensitivity = 1.0f,
-    .dead_zone = 0.05f,                 // Default: degrees/second threshold for angular velocity  
+    .dead_zone = 3.0f,                  // Ignore tilts below 3 degrees (reduces jitter)
     .scroll_threshold = 0.3f,
     .invert_x = false,
     .invert_y = false,
